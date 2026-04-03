@@ -11,7 +11,7 @@ export default function Home() {
 
   const handleGetStarted = () => {
     if (isAuthenticated) {
-      window.location.href = "/board";
+      window.location.href = "/board-generator";
     } else {
       window.location.href = getLoginUrl();
     }
@@ -28,6 +28,9 @@ export default function Home() {
         {isAuthenticated && (
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <span style={{ color: "#2C3E50", fontWeight: "500" }}>{user?.name}</span>
+            <a href="/board-history" style={{ color: "#FF69B4", textDecoration: "none", fontWeight: "500" }}>
+              看板記錄
+            </a>
           </div>
         )}
       </div>
