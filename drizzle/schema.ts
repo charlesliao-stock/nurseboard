@@ -25,4 +25,39 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+/**
+ * Board records table for storing generated nurse recognition boards.
+ * Each record contains user info, achievement description, photo URL, and template choice.
+ */
+export const boardRecords = mysqlTable("board_records", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  theme: varchar("theme", { length: 255 }).default("2026優良護理人員").notNull(),
+  department: varchar("department", { length: 255 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  achievement: text("achievement").notNull(), // Max 30 characters
+  photoUrl: text("photoUrl"),
+  templateId: int("templateId").default(1).notNull(), // 1-10 for 10 templates
+  boardImageUrl: text("boardImageUrl"), // URL to exported board image
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BoardRecord = typeof boardRecords.$inferSelect;
+export type InsertBoardRecord = typeof boardRecords.$inferInsert;
+
+/**
+ * Theme settings table for managing board theme title.
+ * Allows admin to customize the default theme title.
+ */
+export const themeSettings = mysqlTable("theme_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  key: varchar("key", { length: 255 }).notNull().unique(),
+  value: text("value").notNull(),
+  description: text("description"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ThemeSetting = typeof themeSettings.$inferSelect;
+export type InsertThemeSetting = typeof themeSettings.$inferInsert;

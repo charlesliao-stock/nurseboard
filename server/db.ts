@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, BoardRecord, InsertBoardRecord, ThemeSetting, boardRecords, themeSettings } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,130 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+/**
+ * Get all board records for a user
+ */
+export async function getUserBoardRecords(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get board records: database not available");
+    return [];
+  }
+
+  try {
+    const result = await db
+      .select()
+      .from(boardRecords)
+      .where(eq(boardRecords.userId, userId))
+      .orderBy(desc(boardRecords.createdAt));
+    return result;
+  } catch (error) {
+    console.error("[Database] Failed to get board records:", error);
+    throw error;
+  }
+}
+
+/**
+ * Create a new board record
+ */
+export async function createBoardRecord(record: InsertBoardRecord): Promise<BoardRecord | null> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot create board record: database not available");
+    return null;
+  }
+
+  try {
+    const result = await db.insert(boardRecords).values(record);
+    const id = result[0].insertId;
+    const created = await db.select().from(boardRecords).where(eq(boardRecords.id, Number(id))).limit(1);
+    return created.length > 0 ? created[0] : null;
+  } catch (error) {
+    console.error("[Database] Failed to create board record:", error);
+    throw error;
+  }
+}
+
+/**
+ * Update a board record
+ */
+export async function updateBoardRecord(id: number, updates: Partial<InsertBoardRecord>): Promise<BoardRecord | null> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot update board record: database not available");
+    return null;
+  }
+
+  try {
+    await db.update(boardRecords).set(updates).where(eq(boardRecords.id, id));
+    const result = await db.select().from(boardRecords).where(eq(boardRecords.id, id)).limit(1);
+    return result.length > 0 ? result[0] : null;
+  } catch (error) {
+    console.error("[Database] Failed to update board record:", error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a board record
+ */
+export async function deleteBoardRecord(id: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot delete board record: database not available");
+    return false;
+  }
+
+  try {
+    await db.delete(boardRecords).where(eq(boardRecords.id, id));
+    return true;
+  } catch (error) {
+    console.error("[Database] Failed to delete board record:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get theme setting by key
+ */
+export async function getThemeSetting(key: string): Promise<ThemeSetting | null> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get theme setting: database not available");
+    return null;
+  }
+
+  try {
+    const result = await db.select().from(themeSettings).where(eq(themeSettings.key, key)).limit(1);
+    return result.length > 0 ? result[0] : null;
+  } catch (error) {
+    console.error("[Database] Failed to get theme setting:", error);
+    throw error;
+  }
+}
+
+/**
+ * Set or update theme setting
+ */
+export async function setThemeSetting(key: string, value: string, description?: string): Promise<ThemeSetting | null> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot set theme setting: database not available");
+    return null;
+  }
+
+  try {
+    const existing = await getThemeSetting(key);
+    if (existing) {
+      await db.update(themeSettings).set({ value, description }).where(eq(themeSettings.key, key));
+    } else {
+      await db.insert(themeSettings).values({ key, value, description });
+    }
+    return getThemeSetting(key);
+  } catch (error) {
+    console.error("[Database] Failed to set theme setting:", error);
+    throw error;
+  }
+}
+
+
