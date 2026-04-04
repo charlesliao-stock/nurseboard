@@ -43,9 +43,17 @@
 - **修正**：為 BoardPreview 添加 `zIndex: 1`
 
 ## 修改文件列表
-1. `/home/ubuntu/nurseboard/client/src/App.tsx` - 路由配置修正
+1. `/home/ubuntu/nurseboard/client/src/App.tsx` - 路由配置修正與 GitHub Pages Base Path 支持
 2. `/home/ubuntu/nurseboard/client/src/pages/BoardGenerator.tsx` - 版型選擇區域改進
 3. `/home/ubuntu/nurseboard/client/src/components/BoardPreview.tsx` - z-index 調整
+4. `/home/ubuntu/nurseboard/vite.config.ts` - 設置 `base: "/nurseboard/"` 以支持 GitHub Pages
+5. `/home/ubuntu/nurseboard/client/src/pages/Home.tsx` - 修正導航路徑以包含 Base Path
+
+## GitHub Pages 部署修正
+為了讓網頁在 `https://charlesliao-stock.github.io/nurseboard/` 正確顯示，進行了以下調整：
+- **Vite Base Path**：在 `vite.config.ts` 設置 `base: "/nurseboard/"`，確保靜態資源（JS, CSS, 圖片）路徑正確。
+- **Router Base Path**：在 `App.tsx` 的 `WouterRouter` 中設置 `base="/nurseboard"`，確保路由在子目錄下正常運作。
+- **導航路徑修正**：將 `window.location.href` 的跳轉路徑改為絕對路徑（包含 `/nurseboard/`），避免導航至根目錄。
 
 ## 驗證步驟
 1. 運行 `pnpm install` 安裝依賴
