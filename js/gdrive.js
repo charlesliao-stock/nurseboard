@@ -13,7 +13,7 @@
 const GDrive = (() => {
 
   // ── ⚙️  請填入你的 Google OAuth Client ID ──────
-  const CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE';
+  const CLIENT_ID = '807521931394-s3cf0nogol04fpdc4634thug2o0qa6bl.apps.googleusercontent.com';
   const SCOPES    = 'https://www.googleapis.com/auth/drive.file';
   // ────────────────────────────────────────────────
 
