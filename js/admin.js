@@ -580,28 +580,81 @@
     const list = $('fieldList');
     if (!list) return;
     list.innerHTML = '';
-    const BUILT_IN = ['unit','name','title','deed','date'];
+    const enabledMap = FieldManager.getEnabledMap();
+
     FieldManager.load().forEach(f => {
+      const isBuiltIn = FieldManager.isBuiltIn(f.id);
+      const enabled   = enabledMap[f.id] !== false;
+
       const li = document.createElement('li');
-      const isBuiltIn = BUILT_IN.includes(f.id);
-      li.innerHTML = `
-        <span class="fl-label">${f.label}</span>
-        <span class="fl-type">${f.type === 'textarea' ? '長文字' : f.type === 'date' ? '日期' : '文字'}</span>
-        ${isBuiltIn
-          ? '<span class="fl-builtin">內建</span>'
-          : `<button class="fl-del" data-id="${f.id}" title="刪除">✕</button>`
-        }
-      `;
+      if (!enabled) li.classList.add('disabled');
+
+      // Label
+      const labelEl = document.createElement('span');
+      labelEl.className = 'fl-label';
+      labelEl.textContent = f.label;
+      li.appendChild(labelEl);
+
+      // Type badge
+      const typeEl = document.createElement('span');
+      typeEl.className = 'fl-type';
+      typeEl.textContent = f.type === 'textarea' ? '長文字' : f.type === 'date' ? '日期' : '文字';
+      li.appendChild(typeEl);
+
+      // Built-in badge
+      if (isBuiltIn) {
+        const badge = document.createElement('span');
+        badge.className = 'fl-builtin';
+        badge.textContent = '內建';
+        li.appendChild(badge);
+      }
+
+      // Enable/disable toggle
+      const tog = document.createElement('button');
+      tog.className = 'tl-toggle' + (enabled ? ' on' : '');
+      tog.title = enabled ? '停用' : '啟用';
+      tog.addEventListener('click', () => {
+        const nowEnabled = tog.classList.toggle('on');
+        li.classList.toggle('disabled', !nowEnabled);
+        tog.title = nowEnabled ? '停用' : '啟用';
+        FieldManager.setFieldEnabled(f.id, nowEnabled);
+        _showToast(`欄位「${f.label}」已${nowEnabled ? '啟用' : '停用'}`);
+      });
+      li.appendChild(tog);
+
+      // Delete button (non built-in only)
       if (!isBuiltIn) {
-        li.querySelector('.fl-del').addEventListener('click', () => {
-          if (!confirm(`確定刪除欄位「${f.label}」？`)) return;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'fl-del';
+        delBtn.title = '刪除';
+        delBtn.textContent = '✕';
+        delBtn.addEventListener('click', () => {
+          if (!confirm(`確定刪除欄位「${f.label}」？\n各模板中綁定此欄位的文字框也會一併移除。`)) return;
+          _removeFieldFromTemplates(f.id);
           FieldManager.removeField(f.id);
           _renderFieldList();
-          _showToast('已刪除欄位');
+          const tpl = _getActiveTpl();
+          if (tpl) { _renderEditorCanvas(tpl); _renderOverlays(tpl); }
+          _showToast(`已刪除欄位「${f.label}」`);
         });
+        li.appendChild(delBtn);
       }
+
       list.appendChild(li);
     });
+  }
+
+  function _removeFieldFromTemplates(fieldId) {
+    const templates = TemplateManager.load();
+    templates.forEach(tpl => {
+      if (Array.isArray(tpl.elements)) {
+        tpl.elements = tpl.elements.filter(el => el.bindField !== fieldId);
+      }
+    });
+    TemplateManager.save(templates);
+    // Sync in-memory state
+    adminState.templates = templates;
+    _renderTemplateList();
   }
 
   function _openAddFieldModal() {

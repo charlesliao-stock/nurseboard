@@ -95,7 +95,7 @@
     const section = document.getElementById('dynamicFields');
     if (!section) return;
     section.innerHTML = '';
-    const fields = FieldManager.load();
+    const fields = FieldManager.loadEnabled();  // 只顯示啟用的欄位
 
     fields.forEach(f => {
       const group = document.createElement('div');

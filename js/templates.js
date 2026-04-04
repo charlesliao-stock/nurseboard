@@ -392,14 +392,18 @@ const TemplateManager = (() => {
 
 // ── FieldManager ──────────────────────────────────────
 const FieldManager = (() => {
-  const STORAGE_KEY = 'nurse_fields';
+  const STORAGE_KEY    = 'nurse_fields';
+  const ENABLED_KEY    = 'nurse_fields_enabled';
+
+  // 只有這三個是內建（不可刪除，但可停用）
+  const BUILT_IN = ['unit', 'name', 'deed'];
 
   const DEFAULT_FIELDS = [
-    { id: 'unit',  label: '單位／科別',  type: 'text' },
-    { id: 'name',  label: '護理師姓名',  type: 'text' },
-    { id: 'title', label: '職稱',        type: 'text' },
-    { id: 'deed',  label: '優良事蹟',    type: 'textarea' },
-    { id: 'date',  label: '表揚日期',    type: 'date' },
+    { id: 'unit',  label: '單位／科別', type: 'text'     },
+    { id: 'name',  label: '護理師姓名', type: 'text'     },
+    { id: 'deed',  label: '優良事蹟',   type: 'textarea' },
+    { id: 'title', label: '職稱',       type: 'text'     },
+    { id: 'date',  label: '表揚日期',   type: 'date'     },
   ];
 
   function load() {
@@ -417,20 +421,53 @@ const FieldManager = (() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(fields));
   }
 
+  // ── Enabled map ───────────────────────────────
+  function getEnabledMap() {
+    try {
+      const raw = localStorage.getItem(ENABLED_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    // Default: all enabled
+    const map = {};
+    load().forEach(f => { map[f.id] = true; });
+    return map;
+  }
+
+  function setFieldEnabled(id, enabled) {
+    const map = getEnabledMap();
+    map[id] = enabled;
+    localStorage.setItem(ENABLED_KEY, JSON.stringify(map));
+  }
+
+  function isEnabled(id) {
+    return getEnabledMap()[id] !== false;
+  }
+
+  // Load only enabled fields
+  function loadEnabled() {
+    const map = getEnabledMap();
+    return load().filter(f => map[f.id] !== false);
+  }
+
+  // ── CRUD ──────────────────────────────────────
   function addField(label, type) {
     const fields = load();
     const id = 'field_' + Date.now();
     fields.push({ id, label, type: type || 'text' });
     save(fields);
+    // Default to enabled
+    setFieldEnabled(id, true);
     return id;
   }
 
   function removeField(id) {
-    // Prevent removing built-in fields
-    const BUILT_IN = ['unit','name','title','deed','date'];
-    if (BUILT_IN.includes(id)) return false;
+    if (BUILT_IN.includes(id)) return false;  // 內建欄位不可刪除
     const fields = load().filter(f => f.id !== id);
     save(fields);
+    // Clean up enabled map
+    const map = getEnabledMap();
+    delete map[id];
+    localStorage.setItem(ENABLED_KEY, JSON.stringify(map));
     return true;
   }
 
@@ -438,5 +475,10 @@ const FieldManager = (() => {
     return load().find(f => f.id === id) || null;
   }
 
-  return { load, save, addField, removeField, getById, DEFAULT_FIELDS };
+  function isBuiltIn(id) {
+    return BUILT_IN.includes(id);
+  }
+
+  return { load, save, addField, removeField, getById, loadEnabled,
+           getEnabledMap, setFieldEnabled, isEnabled, isBuiltIn, DEFAULT_FIELDS, BUILT_IN };
 })();
