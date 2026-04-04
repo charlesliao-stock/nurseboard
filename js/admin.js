@@ -5,6 +5,7 @@
 
 (() => {
   // ── Config ─────────────────────────────────────
+  const VERSION = '1.0.1'; // Force cache update
   // ⚠️  正式部署前請更換為環境變數或後端驗證
   const ADMIN_CREDENTIALS = {
     username: 'admin',
