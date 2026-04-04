@@ -1,329 +1,264 @@
 /**
- * canvas.js
- * Canvas 合成引擎 — 負責將模板 + 使用者資料渲染成圖像
+ * canvas.js  v2
+ * Canvas 合成引擎 — 多實例架構，修正縮圖渲染狀態汙染
  * 輸出尺寸：1280 × 720 px (16:9)
  */
 
-const CanvasEngine = (() => {
+// ── 單一實例 factory ─────────────────────────────
+function createCanvasInstance(canvasEl) {
   const W = 1280, H = 720;
+  canvasEl.width  = W;
+  canvasEl.height = H;
+  const ctx = canvasEl.getContext('2d');
 
-  let _canvas = null;
-  let _ctx    = null;
-  let _userPhoto = null;   // HTMLImageElement or null
-  let _bgImage   = null;   // background image if any
+  let _userPhoto = null;
+  let _bgImage   = null;
+  let _cropState = null; // { scale, offsetX, offsetY }
 
-  // ── Init ───────────────────────────────────────
-  function init(canvasEl) {
-    _canvas = canvasEl;
-    _canvas.width  = W;
-    _canvas.height = H;
-    _ctx = _canvas.getContext('2d');
-  }
+  function setUserPhoto(img, cropState) { _userPhoto = img; _cropState = cropState || null; }
+  function clearUserPhoto() { _userPhoto = null; _cropState = null; }
+  function setBgImage(img)  { _bgImage = img; }
 
-  // ── Set user photo ─────────────────────────────
-  function setUserPhoto(img) { _userPhoto = img; }
-  function clearUserPhoto()  { _userPhoto = null; }
-
-  function setBgImage(img) { _bgImage = img; }
-
-  // ── Main render ────────────────────────────────
+  // ── Main render ──────────────────────────────
   function render(template, formData) {
-    if (!_ctx || !template) return;
-    const ctx = _ctx;
+    if (!ctx || !template) return;
     ctx.clearRect(0, 0, W, H);
-
-    // 1. Background
     _drawBackground(ctx, template);
-
-    // 2. Decorations (behind content)
-    if (template.decorations) {
-      template.decorations.forEach(d => _drawDecoration(ctx, d));
-    }
-
-    // 3. Photo frame
-    if (template.photoFrame) {
-      _drawPhotoFrame(ctx, template.photoFrame);
-    }
-
-    // 4. Text elements
-    if (template.elements) {
-      template.elements.forEach(el => {
-        const text = _resolveText(el, formData);
-        _drawTextElement(ctx, el, text);
-      });
-    }
-
-    return _canvas;
+    (template.decorations || []).forEach(d => _drawDecoration(ctx, d));
+    if (template.photoFrame) _drawPhotoFrame(ctx, template.photoFrame);
+    (template.elements || []).forEach(el => _drawTextElement(ctx, el, _resolveText(el, formData)));
+    return canvasEl;
   }
 
-  // ── Background ────────────────────────────────
+  // ── Background ───────────────────────────────
   function _drawBackground(ctx, tpl) {
-    // Solid color
-    ctx.fillStyle = tpl.background || '#ffffff';
+    ctx.fillStyle = tpl.background || '#fff';
     ctx.fillRect(0, 0, W, H);
-
-    // Optional background image
     if (_bgImage) {
+      ctx.save();
+      ctx.globalAlpha = tpl.bgImageOpacity || 1;
       ctx.drawImage(_bgImage, 0, 0, W, H);
+      ctx.restore();
     }
-
-    // Pattern overlay
-    if (tpl.bgPattern === 'grid') {
-      _drawGridPattern(ctx, tpl.bgPatternColor || 'rgba(0,0,0,.05)');
-    } else if (tpl.bgPattern === 'dots') {
-      _drawDotPattern(ctx, tpl.bgPatternColor || 'rgba(0,0,0,.05)');
-    }
+    if (tpl.bgPattern === 'grid')  _drawGridPattern(ctx, tpl.bgPatternColor || 'rgba(0,0,0,.05)');
+    if (tpl.bgPattern === 'dots')  _drawDotPattern(ctx, tpl.bgPatternColor || 'rgba(0,0,0,.05)');
   }
 
   function _drawGridPattern(ctx, color) {
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.5;
-    const gap = 40;
-    for (let x = 0; x <= W; x += gap) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    for (let y = 0; y <= H; y += gap) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    }
+    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 0.5;
+    for (let x = 0; x <= W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (let y = 0; y <= H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
     ctx.restore();
   }
 
   function _drawDotPattern(ctx, color) {
-    ctx.save();
-    ctx.fillStyle = color;
-    const gap = 30;
-    for (let x = 0; x <= W; x += gap) {
-      for (let y = 0; y <= H; y += gap) {
-        ctx.beginPath();
-        ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
+    ctx.save(); ctx.fillStyle = color;
+    for (let x = 0; x <= W; x += 30)
+      for (let y = 0; y <= H; y += 30) { ctx.beginPath(); ctx.arc(x,y,1.5,0,Math.PI*2); ctx.fill(); }
     ctx.restore();
   }
 
-  // ── Decorations ───────────────────────────────
+  // ── Decorations ──────────────────────────────
   function _drawDecoration(ctx, d) {
     ctx.save();
-    if (d.type === 'rect') {
-      ctx.fillStyle = d.color;
-      ctx.fillRect(d.x, d.y, d.width, d.height);
-    } else if (d.type === 'circle') {
-      ctx.fillStyle = d.color;
-      ctx.beginPath();
-      ctx.arc(d.cx, d.cy, d.r, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (d.type === 'text_deco') {
-      ctx.font = `700 ${d.fontSize}px 'Noto Serif TC', serif`;
-      ctx.fillStyle = d.color;
-      ctx.textAlign = 'left';
-      ctx.fillText(d.text, d.x, d.y);
+    switch (d.type) {
+      case 'rect':
+        ctx.fillStyle = d.color;
+        if (d.radius) { ctx.beginPath(); _pathRR(ctx,d.x,d.y,d.width,d.height,d.radius); ctx.fill(); }
+        else ctx.fillRect(d.x, d.y, d.width, d.height);
+        break;
+      case 'circle':
+        ctx.fillStyle = d.color;
+        ctx.beginPath(); ctx.arc(d.cx,d.cy,d.r,0,Math.PI*2); ctx.fill();
+        break;
+      case 'ring':
+        ctx.strokeStyle = d.color; ctx.lineWidth = d.lineWidth || 2;
+        ctx.beginPath(); ctx.arc(d.cx,d.cy,d.r,0,Math.PI*2); ctx.stroke();
+        break;
+      case 'line':
+        ctx.strokeStyle = d.color; ctx.lineWidth = d.lineWidth || 1;
+        if (d.dash) ctx.setLineDash(d.dash);
+        ctx.beginPath(); ctx.moveTo(d.x1,d.y1); ctx.lineTo(d.x2,d.y2); ctx.stroke();
+        ctx.setLineDash([]);
+        break;
+      case 'text_deco':
+        ctx.font = `700 ${d.fontSize}px 'Noto Serif TC',serif`;
+        ctx.fillStyle = d.color; ctx.textAlign = 'left';
+        ctx.fillText(d.text, d.x, d.y);
+        break;
     }
     ctx.restore();
   }
 
-  // ── Photo Frame ───────────────────────────────
-  function _drawPhotoFrame(ctx, frame) {
-    const { x, y, width: fw, height: fh, shape, borderColor, borderWidth, shadow, glowColor } = frame;
+  // ── Photo Frame ──────────────────────────────
+  function _drawPhotoFrame(ctx, f) {
+    const { x, y, width: fw, height: fh, shape, borderColor, borderWidth, shadow, glowColor } = f;
 
+    // Shadow layer (must be drawn before clip to avoid clipping shadow)
+    if (shadow || glowColor) {
+      ctx.save();
+      ctx.shadowColor   = glowColor || 'rgba(0,0,0,.22)';
+      ctx.shadowBlur    = glowColor ? 40 : 28;
+      ctx.shadowOffsetX = glowColor ?  0 :  4;
+      ctx.shadowOffsetY = glowColor ?  0 :  8;
+      // Draw a dummy filled shape just for shadow
+      ctx.fillStyle = (f.background || '#ffffff') + '01'; // nearly transparent
+      ctx.beginPath(); _clipPath(ctx, x, y, fw, fh, shape); ctx.fill();
+      ctx.restore();
+    }
+
+    // Clipped photo / placeholder
     ctx.save();
+    ctx.beginPath(); _clipPath(ctx, x, y, fw, fh, shape); ctx.clip();
 
-    // Glow effect (vivid template)
-    if (glowColor) {
-      ctx.shadowColor = glowColor;
-      ctx.shadowBlur = 40;
-    }
-
-    // Shadow
-    if (shadow) {
-      ctx.shadowColor = 'rgba(0,0,0,.20)';
-      ctx.shadowBlur  = 24;
-      ctx.shadowOffsetX = 4;
-      ctx.shadowOffsetY = 8;
-    }
-
-    // Clip region
-    ctx.beginPath();
-    if (shape === 'circle') {
-      const cx = x + fw / 2, cy = y + fh / 2, r = Math.min(fw, fh) / 2;
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    } else if (shape === 'rounded') {
-      _roundRect(ctx, x, y, fw, fh, 20);
-    } else {
-      ctx.rect(x, y, fw, fh);
-    }
-    ctx.clip();
-
-    // Draw photo or placeholder
     if (_userPhoto) {
-      const imgW = _userPhoto.naturalWidth || _userPhoto.width;
-      const imgH = _userPhoto.naturalHeight || _userPhoto.height;
-      const scale = Math.max(fw / imgW, fh / imgH);
-      const dw = imgW * scale, dh = imgH * scale;
-      const dx = x + (fw - dw) / 2, dy = y + (fh - dh) / 2;
-      ctx.drawImage(_userPhoto, dx, dy, dw, dh);
+      _drawCroppedPhoto(ctx, x, y, fw, fh);
     } else {
-      // Placeholder
-      ctx.fillStyle = 'rgba(42,143,166,.12)';
-      ctx.fillRect(x, y, fw, fh);
-      ctx.restore(); ctx.save();
-      ctx.font = `300 ${Math.floor(fw * 0.12)}px 'Noto Sans TC', sans-serif`;
-      ctx.fillStyle = 'rgba(42,143,166,.35)';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('相片', x + fw / 2, y + fh / 2);
+      // Gradient placeholder
+      const g = ctx.createLinearGradient(x, y, x+fw, y+fh);
+      g.addColorStop(0, 'rgba(42,143,166,.10)');
+      g.addColorStop(1, 'rgba(42,143,166,.20)');
+      ctx.fillStyle = g; ctx.fillRect(x, y, fw, fh);
+      ctx.font = `300 ${Math.floor(fw*.14)}px 'Noto Sans TC',sans-serif`;
+      ctx.fillStyle = 'rgba(42,143,166,.40)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('相片', x+fw/2, y+fh/2-fw*.05);
+      ctx.font = `300 ${Math.floor(fw*.07)}px 'Noto Sans TC',sans-serif`;
+      ctx.fillStyle = 'rgba(42,143,166,.25)';
+      ctx.fillText('點擊上傳', x+fw/2, y+fh/2+fw*.08);
     }
-
     ctx.restore();
 
-    // Border (drawn after clip is released)
+    // Border
     if (borderColor && borderColor !== 'transparent' && borderWidth > 0) {
       ctx.save();
-      ctx.strokeStyle = borderColor;
-      ctx.lineWidth = borderWidth;
-      ctx.beginPath();
-      if (shape === 'circle') {
-        const cx = x + fw / 2, cy = y + fh / 2, r = Math.min(fw, fh) / 2 - borderWidth / 2;
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      } else if (shape === 'rounded') {
-        _roundRect(ctx, x + borderWidth / 2, y + borderWidth / 2,
-          fw - borderWidth, fh - borderWidth, 18);
-      } else {
-        ctx.rect(x, y, fw, fh);
-      }
-      ctx.stroke();
+      ctx.strokeStyle = borderColor; ctx.lineWidth = borderWidth;
+      const bh = borderWidth/2;
+      ctx.beginPath(); _clipPath(ctx, x+bh, y+bh, fw-borderWidth, fh-borderWidth, shape); ctx.stroke();
       ctx.restore();
     }
   }
 
-  // ── Text Element ──────────────────────────────
+  function _clipPath(ctx, x, y, fw, fh, shape) {
+    if (shape === 'circle') ctx.arc(x+fw/2, y+fh/2, Math.min(fw,fh)/2, 0, Math.PI*2);
+    else if (shape === 'rounded') _pathRR(ctx, x, y, fw, fh, Math.min(fw,fh)*0.08);
+    else ctx.rect(x, y, fw, fh);
+  }
+
+  function _drawCroppedPhoto(ctx, x, y, fw, fh) {
+    const img = _userPhoto;
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (_cropState) {
+      const { scale: sc, offsetX, offsetY } = _cropState;
+      ctx.drawImage(img, x + offsetX, y + offsetY, iw * sc, ih * sc);
+    } else {
+      const s = Math.max(fw/iw, fh/ih);
+      ctx.drawImage(img, x+(fw-iw*s)/2, y+(fh-ih*s)/2, iw*s, ih*s);
+    }
+  }
+
+  // ── Text Element ─────────────────────────────
   function _drawTextElement(ctx, el, text) {
     if (!text && !el.bgColor) return;
     ctx.save();
-
-    // Background fill (e.g. top bar)
-    if (el.bgColor) {
-      ctx.fillStyle = el.bgColor;
-      ctx.fillRect(el.x, el.y, el.width, el.height);
+    if (el.bgColor) { ctx.fillStyle = el.bgColor; ctx.fillRect(el.x, el.y, el.width, el.height); }
+    if (text) {
+      const ff = el.serif ? "'Noto Serif TC',serif" : "'Noto Sans TC',sans-serif";
+      ctx.font = `${el.fontWeight||400} ${el.fontSize||16}px ${ff}`;
+      ctx.fillStyle = el.color || '#1a2126';
+      ctx.textBaseline = 'top';
+      const align = el.align || 'left';
+      let ax = el.x;
+      if (align === 'center') { ctx.textAlign='center'; ax = el.x + el.width/2; }
+      else if (align === 'right') { ctx.textAlign='right'; ax = el.x + el.width; }
+      else ctx.textAlign = 'left';
+      if (el.wrap) _drawWrapped(ctx, text, ax, el.x, el.y, el.width, el.height, el.fontSize, el.lineHeight||1.65);
+      else { const oy = Math.max(0,(el.height-el.fontSize)/2); ctx.fillText(text, ax, el.y+oy, el.width); }
     }
-
-    if (!text) { ctx.restore(); return; }
-
-    // Font setup
-    const fontFamily = el.serif
-      ? "'Noto Serif TC', serif"
-      : "'Noto Sans TC', sans-serif";
-    ctx.font = `${el.fontWeight || 400} ${el.fontSize || 16}px ${fontFamily}`;
-    ctx.fillStyle = el.color || '#1a2126';
-    ctx.textBaseline = 'top';
-
-    const align = el.align || 'left';
-    let anchorX = el.x;
-    if (align === 'center') { ctx.textAlign = 'center'; anchorX = el.x + el.width / 2; }
-    else if (align === 'right') { ctx.textAlign = 'right'; anchorX = el.x + el.width; }
-    else { ctx.textAlign = 'left'; anchorX = el.x; }
-
-    if (el.wrap) {
-      _drawWrappedText(ctx, text, anchorX, el.x, el.y, el.width, el.height,
-        el.fontSize, el.lineHeight || 1.6, align);
-    } else {
-      // Vertically center in element height
-      const offsetY = (el.height - el.fontSize) / 2;
-      ctx.fillText(text, anchorX, el.y + Math.max(0, offsetY), el.width);
-    }
-
     ctx.restore();
   }
 
-  function _drawWrappedText(ctx, text, anchorX, baseX, baseY, maxW, maxH, fontSize, lineH, align) {
+  function _drawWrapped(ctx, text, ax, bx, by, maxW, maxH, fs, lh) {
+    const lhPx = fs * lh;
     const lines = [];
-    const paragraphs = text.split('\n');
-    paragraphs.forEach(para => {
-      const words = para.split('');  // char-by-char for Chinese text
+    for (const para of text.split('\n')) {
+      if (!para) { lines.push(''); continue; }
       let line = '';
-      for (let i = 0; i < words.length; i++) {
-        const test = line + words[i];
-        if (ctx.measureText(test).width > maxW && line.length > 0) {
-          lines.push(line);
-          line = words[i];
-        } else {
-          line = test;
-        }
+      for (const ch of para) {
+        const t = line + ch;
+        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = ch; }
+        else line = t;
       }
       if (line) lines.push(line);
-      if (para === '' && paragraphs.length > 1) lines.push('');
-    });
-
-    const lineHeightPx = fontSize * lineH;
-    let y = baseY;
+    }
+    let y = by;
     for (const ln of lines) {
-      if (y + lineHeightPx > baseY + maxH + lineHeightPx) break;
-      ctx.fillText(ln, anchorX, y);
-      y += lineHeightPx;
+      if (y > by + maxH) break;
+      ctx.fillText(ln, ax, y);
+      y += lhPx;
     }
   }
 
-  // ── Resolve text from formData ─────────────────
-  function _resolveText(el, formData) {
+  // ── Resolve text ─────────────────────────────
+  function _resolveText(el, fd) {
     if (el.bindField === 'custom') return el.customText || '';
-    if (!formData) return '';
-    const map = {
-      unit:  formData.unit  || '',
-      name:  formData.name  || '',
-      title: formData.title || '',
-      deed:  formData.deed  || '',
-      date:  formData.date  ? _formatDate(formData.date) : ''
-    };
-    return map[el.bindField] || '';
+    if (!fd) return '';
+    if (el.bindField === 'date' && fd.date) return _fmtDate(fd.date);
+    return fd[el.bindField] || '';
   }
 
-  function _formatDate(val) {
-    if (!val) return '';
-    const d = new Date(val);
-    if (isNaN(d)) return val;
-    return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  function _fmtDate(v) {
+    const d = new Date(v);
+    if (isNaN(d)) return v;
+    return `${d.getFullYear()} 年 ${d.getMonth()+1} 月 ${d.getDate()} 日`;
   }
 
-  // ── Utility: rounded rect path ────────────────
-  function _roundRect(ctx, x, y, w, h, r) {
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
+  // ── Rounded rect path ────────────────────────
+  function _pathRR(ctx, x, y, w, h, r) {
+    r = Math.min(r, w/2, h/2);
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
   }
 
-  // ── Export PNG ────────────────────────────────
+  // ── Export ───────────────────────────────────
   function exportPNG(filename) {
-    if (!_canvas) return;
-    const link = document.createElement('a');
-    link.download = filename || 'nurse-award.png';
-    link.href = _canvas.toDataURL('image/png', 1.0);
-    link.click();
+    const a = document.createElement('a');
+    a.download = filename || 'nurse-award.png';
+    a.href = canvasEl.toDataURL('image/png', 1.0);
+    a.click();
   }
 
-  // ── Get blob for upload ───────────────────────
-  function getBlob(cb) {
-    if (!_canvas) return;
-    _canvas.toBlob(cb, 'image/png', 1.0);
+  function getBlob(cb) { canvasEl.toBlob(cb, 'image/png', 1.0); }
+
+  function fitToContainer(el) {
+    if (!el) return;
+    const s = Math.min((el.clientWidth-48)/W, (el.clientHeight-48)/H);
+    canvasEl.style.width  = Math.floor(W*s) + 'px';
+    canvasEl.style.height = Math.floor(H*s) + 'px';
   }
 
-  // ── Scale canvas display to fit container ─────
-  function fitToContainer(containerEl) {
-    if (!_canvas || !containerEl) return;
-    const containerW = containerEl.clientWidth  - 48;
-    const containerH = containerEl.clientHeight - 48;
-    const scale = Math.min(containerW / W, containerH / H);
-    _canvas.style.width  = Math.floor(W * scale) + 'px';
-    _canvas.style.height = Math.floor(H * scale) + 'px';
-  }
+  return { render, setUserPhoto, clearUserPhoto, setBgImage, exportPNG, getBlob, fitToContainer, W, H };
+}
 
-  return { init, render, setUserPhoto, clearUserPhoto, setBgImage,
-           exportPNG, getBlob, fitToContainer, W, H };
+// ── Global singleton for main preview canvas ─────────
+const CanvasEngine = (() => {
+  let _inst = null;
+  const api = {
+    init(canvasEl) { _inst = createCanvasInstance(canvasEl); return _inst; },
+    get W() { return 1280; },
+    get H() { return 720;  }
+  };
+  ['render','setUserPhoto','clearUserPhoto','setBgImage','exportPNG','getBlob','fitToContainer']
+    .forEach(fn => { api[fn] = (...a) => _inst?.[fn](...a); });
+  return api;
 })();
+
+// ── Thumbnail helper (isolated, no shared state) ─────
+function renderTemplateThumbnail(tpl) {
+  const mc   = document.createElement('canvas');
+  const inst = createCanvasInstance(mc);
+  inst.render(tpl, {});
+  return mc.toDataURL('image/png');
+}

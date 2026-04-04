@@ -1,6 +1,6 @@
 /**
- * app.js
- * 主應用邏輯 — 狀態管理、UI 互動、預覽更新
+ * app.js  v2
+ * 主應用邏輯 — 整合 CropTool、修正縮圖獨立渲染
  */
 
 (() => {
@@ -9,59 +9,50 @@
     selectedTemplateId: null,
     templates: [],
     formData: { unit: '', name: '', title: '', deed: '', date: '' },
-    photoFile: null,
-    photoImg: null
+    photo: null,       // { img, cropState, shape }
   };
 
   // ── DOM refs ───────────────────────────────────
   const $ = id => document.getElementById(id);
   const els = {
-    templateGrid:    $('templateGrid'),
-    unitField:       $('unitField'),
-    nameField:       $('nameField'),
-    titleField:      $('titleField'),
-    deedField:       $('deedField'),
-    deedCount:       $('deedCount'),
-    dateField:       $('dateField'),
-    photoDrop:       $('photoDrop'),
-    photoDropInner:  $('photoDropInner'),
-    photoInput:      $('photoInput'),
-    photoPreview:    $('photoPreviewThumb'),
-    photoRemove:     $('photoRemove'),
-    previewCanvas:   $('previewCanvas'),
-    previewWrap:     $('previewWrap'),
+    templateGrid:       $('templateGrid'),
+    unitField:          $('unitField'),
+    nameField:          $('nameField'),
+    titleField:         $('titleField'),
+    deedField:          $('deedField'),
+    deedCount:          $('deedCount'),
+    dateField:          $('dateField'),
+    photoDrop:          $('photoDrop'),
+    photoDropInner:     $('photoDropInner'),
+    photoInput:         $('photoInput'),
+    photoPreviewThumb:  $('photoPreviewThumb'),
+    photoRemove:        $('photoRemove'),
+    previewCanvas:      $('previewCanvas'),
+    previewWrap:        $('previewWrap'),
     previewPlaceholder: $('previewPlaceholder'),
-    btnDownload:     $('btnDownload'),
-    btnUpload:       $('btnUpload'),
-    uploadStatus:    $('uploadStatus'),
-    cropModal:       $('cropModal'),
-    cropImg:         $('cropImg'),
-    cropZoom:        $('cropZoom'),
-    cropCancel:      $('cropCancel'),
-    cropConfirm:     $('cropConfirm'),
-    toast:           $('toast')
+    btnDownload:        $('btnDownload'),
+    btnUpload:          $('btnUpload'),
+    uploadStatus:       $('uploadStatus'),
+    toast:              $('toast')
   };
 
   // ── Init ───────────────────────────────────────
   function init() {
-    // Set today's date
     const today = new Date().toISOString().split('T')[0];
     els.dateField.value = today;
     state.formData.date = today;
 
-    // Load templates & render thumbnails
     state.templates = TemplateManager.load();
-    _renderTemplateThumbs();
 
-    // Auto-select first template
-    if (state.templates.length > 0) {
-      _selectTemplate(state.templates[0].id);
-    }
-
-    // Init Canvas
+    // Init main canvas FIRST
     CanvasEngine.init(els.previewCanvas);
 
-    // Event listeners
+    // Render thumbnails (isolated instances)
+    _renderTemplateThumbs();
+
+    // Auto-select first
+    if (state.templates.length > 0) _selectTemplate(state.templates[0].id);
+
     _bindFormListeners();
     _bindPhotoListeners();
     _bindActionListeners();
@@ -71,21 +62,16 @@
   // ── Template Thumbnails ───────────────────────
   function _renderTemplateThumbs() {
     els.templateGrid.innerHTML = '';
-    state.templates.forEach(tpl => {
+    state.templates.forEach((tpl, i) => {
       const wrap = document.createElement('div');
       wrap.className = 'template-thumb';
       wrap.dataset.id = tpl.id;
+      wrap.style.animationDelay = (i * 60) + 'ms';
 
-      // Mini canvas as thumbnail
-      const mc = document.createElement('canvas');
-      mc.width = 320; mc.height = 180;
-      CanvasEngine.init(mc);
-      CanvasEngine.render(tpl, {});
-      CanvasEngine.init(els.previewCanvas); // restore main canvas
-
+      // Use isolated thumbnail renderer (no shared state)
       const img = document.createElement('img');
-      img.src = mc.toDataURL();
-      img.alt = tpl.name;
+      img.alt  = tpl.name;
+      img.src  = renderTemplateThumbnail(tpl);   // from canvas.js
 
       const label = document.createElement('span');
       label.className = 'thumb-label';
@@ -100,27 +86,20 @@
 
   function _selectTemplate(id) {
     state.selectedTemplateId = id;
-    // Update active state
-    document.querySelectorAll('.template-thumb').forEach(el => {
-      el.classList.toggle('active', el.dataset.id === id);
-    });
-    // Hide placeholder
+    document.querySelectorAll('.template-thumb').forEach(el =>
+      el.classList.toggle('active', el.dataset.id === id)
+    );
     els.previewPlaceholder.style.display = 'none';
     _renderPreview();
   }
 
   // ── Form Listeners ────────────────────────────
   function _bindFormListeners() {
-    const textFields = ['unit', 'name', 'title', 'deed', 'date'];
-    textFields.forEach(key => {
-      const el = {
-        unit:  els.unitField,
-        name:  els.nameField,
-        title: els.titleField,
-        deed:  els.deedField,
-        date:  els.dateField
-      }[key];
-      if (!el) return;
+    const fieldMap = {
+      unit: els.unitField, name: els.nameField,
+      title: els.titleField, deed: els.deedField, date: els.dateField
+    };
+    Object.entries(fieldMap).forEach(([key, el]) => {
       el.addEventListener('input', () => {
         state.formData[key] = el.value;
         if (key === 'deed') els.deedCount.textContent = el.value.length;
@@ -131,81 +110,98 @@
 
   // ── Photo Listeners ───────────────────────────
   function _bindPhotoListeners() {
-    // Click to open file dialog
     els.photoDrop.addEventListener('click', e => {
       if (e.target === els.photoRemove) return;
+      if (state.photo) return; // already has photo, click remove instead
       els.photoInput.click();
     });
 
-    // File selected
     els.photoInput.addEventListener('change', e => {
-      if (e.target.files[0]) _loadPhoto(e.target.files[0]);
+      const f = e.target.files[0];
+      if (f) _openCrop(f);
     });
 
-    // Drag & drop
     els.photoDrop.addEventListener('dragover', e => {
-      e.preventDefault();
-      els.photoDrop.classList.add('drag-over');
+      e.preventDefault(); els.photoDrop.classList.add('drag-over');
     });
     els.photoDrop.addEventListener('dragleave', () => {
       els.photoDrop.classList.remove('drag-over');
     });
     els.photoDrop.addEventListener('drop', e => {
-      e.preventDefault();
-      els.photoDrop.classList.remove('drag-over');
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) _loadPhoto(file);
+      e.preventDefault(); els.photoDrop.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f?.type.startsWith('image/')) _openCrop(f);
     });
 
-    // Remove photo
     els.photoRemove.addEventListener('click', e => {
       e.stopPropagation();
-      state.photoFile = null;
-      state.photoImg  = null;
-      CanvasEngine.clearUserPhoto();
-      els.photoPreview.hidden = true;
-      els.photoRemove.hidden  = true;
-      els.photoDropInner.hidden = false;
-      els.photoInput.value = '';
-      _renderPreview();
+      _clearPhoto();
     });
-
-    // Crop modal
-    els.cropCancel.addEventListener('click', () => {
-      els.cropModal.hidden = true;
-    });
-    els.cropConfirm.addEventListener('click', _confirmCrop);
   }
 
-  function _loadPhoto(file) {
-    state.photoFile = file;
-    const url = URL.createObjectURL(file);
+  function _openCrop(file) {
+    // Determine shape from selected template's photoFrame
+    const tpl = state.selectedTemplateId
+      ? TemplateManager.getById(state.selectedTemplateId)
+      : null;
+    const shape = tpl?.photoFrame?.shape || 'circle';
 
-    // Show crop modal
-    els.cropImg.src = url;
-    els.cropZoom.value = 100;
-    els.cropModal.hidden = false;
+    CropTool.open({
+      file,
+      shape,
+      onConfirm: (result) => {
+        state.photo = result;
+
+        // Convert normalized cropState → canvas-space cropState
+        // result.cropState: { scale (image widths), offsetX/Y (fractions of frame) }
+        // canvas.js _drawCroppedPhoto expects: { scale (img scale factor), offsetX/Y (px in frame) }
+        const pf = tpl?.photoFrame;
+        if (pf && result.cropState) {
+          const fw = pf.width, fh = pf.height;
+          const iw = result.img.naturalWidth;
+          const scaleFactor = result.cropState.scale * fw / iw;
+          state.photo.cropState = {
+            scale:   scaleFactor,
+            offsetX: result.cropState.offsetX * fw,
+            offsetY: result.cropState.offsetY * fh
+          };
+        }
+
+        CanvasEngine.setUserPhoto(result.img, state.photo.cropState);
+
+        // Thumbnail preview
+        _showPhotoThumb(result.img);
+        _renderPreview();
+        els.photoInput.value = '';
+      },
+      onCancel: () => {
+        els.photoInput.value = '';
+      }
+    });
   }
 
-  function _confirmCrop() {
-    // Simple crop: use the image as-is for now (full crop UI is phase 2)
-    // For now, just load into canvas engine
-    const img = new Image();
-    img.onload = () => {
-      state.photoImg = img;
-      CanvasEngine.setUserPhoto(img);
+  function _showPhotoThumb(img) {
+    // Draw 60×60 thumbnail
+    const tc = document.createElement('canvas');
+    tc.width = tc.height = 120;
+    const tctx = tc.getContext('2d');
+    const s = Math.max(120 / img.naturalWidth, 120 / img.naturalHeight);
+    tctx.drawImage(img, (120-img.naturalWidth*s)/2, (120-img.naturalHeight*s)/2, img.naturalWidth*s, img.naturalHeight*s);
 
-      // Show thumbnail
-      els.photoPreview.src = img.src;
-      els.photoPreview.hidden = false;
-      els.photoRemove.hidden  = false;
-      els.photoDropInner.hidden = true;
+    els.photoPreviewThumb.src    = tc.toDataURL();
+    els.photoPreviewThumb.hidden = false;
+    els.photoRemove.hidden       = false;
+    els.photoDropInner.hidden    = true;
+  }
 
-      els.cropModal.hidden = true;
-      _renderPreview();
-      URL.revokeObjectURL(els.cropImg.src);
-    };
-    img.src = els.cropImg.src;
+  function _clearPhoto() {
+    state.photo = null;
+    CanvasEngine.clearUserPhoto();
+    els.photoPreviewThumb.hidden = true;
+    els.photoRemove.hidden       = true;
+    els.photoDropInner.hidden    = false;
+    els.photoInput.value         = '';
+    _renderPreview();
   }
 
   // ── Actions ───────────────────────────────────
@@ -215,66 +211,49 @@
   }
 
   function _download() {
-    if (!state.selectedTemplateId) {
-      _showToast('請先選擇模板');
-      return;
-    }
+    if (!state.selectedTemplateId) { _toast('請先選擇模板'); return; }
     const tpl = TemplateManager.getById(state.selectedTemplateId);
     if (!tpl) return;
-
-    // Final high-res render
     CanvasEngine.render(tpl, state.formData);
-
-    const name = state.formData.name || '護理師';
-    const unit = state.formData.unit || '單位';
-    const filename = `優良護理師_${unit}_${name}.png`;
+    const filename = `優良護理師_${state.formData.unit||'單位'}_${state.formData.name||'護理師'}.png`;
     CanvasEngine.exportPNG(filename);
-    _showToast('✓ 已下載 PNG');
+    _toast('✓ 已下載 PNG');
   }
 
   async function _uploadToDrive() {
-    if (!state.selectedTemplateId) {
-      _showToast('請先選擇模板');
-      return;
-    }
+    if (!state.selectedTemplateId) { _toast('請先選擇模板'); return; }
+    if (typeof GDrive === 'undefined') { _toast('Google Drive 模組未載入'); return; }
 
     const tpl = TemplateManager.getById(state.selectedTemplateId);
     if (!tpl) return;
-
-    // Check CLIENT_ID configured
-    if (typeof GDrive === 'undefined') {
-      _showToast('Google Drive 模組未載入');
-      return;
-    }
 
     els.btnUpload.disabled = true;
     els.uploadStatus.textContent = '連接 Google 帳號…';
 
-    // Final render
     CanvasEngine.render(tpl, state.formData);
 
     CanvasEngine.getBlob(async (blob) => {
-      const name = state.formData.name || '護理師';
       const unit = state.formData.unit || '單位';
+      const name = state.formData.name || '護理師';
       const filename = `優良護理師_${unit}_${name}.png`;
 
-      const result = await GDrive.upload(blob, filename, unit, (msg) => {
+      const result = await GDrive.upload(blob, filename, unit, msg => {
         els.uploadStatus.textContent = msg;
       });
 
       els.btnUpload.disabled = false;
 
       if (result.success) {
-        els.uploadStatus.textContent = `✓ 已上傳至 Google Drive`;
-        _showToast('✓ 成功上傳 Google Drive');
+        els.uploadStatus.textContent = '✓ 已上傳至 Google Drive';
+        _toast('✓ 成功上傳 Google Drive');
       } else {
         els.uploadStatus.textContent = `✗ 上傳失敗：${result.error}`;
-        _showToast('✗ 上傳失敗，請重試');
+        _toast('✗ 上傳失敗，請重試');
       }
     });
   }
 
-  // ── Render Preview ────────────────────────────
+  // ── Preview ───────────────────────────────────
   function _renderPreview() {
     if (!state.selectedTemplateId) return;
     const tpl = TemplateManager.getById(state.selectedTemplateId);
@@ -288,17 +267,14 @@
     let raf;
     window.addEventListener('resize', () => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        CanvasEngine.fitToContainer(els.previewWrap);
-      });
+      raf = requestAnimationFrame(() => CanvasEngine.fitToContainer(els.previewWrap));
     });
-    // Initial fit
-    setTimeout(() => CanvasEngine.fitToContainer(els.previewWrap), 100);
+    setTimeout(() => CanvasEngine.fitToContainer(els.previewWrap), 120);
   }
 
   // ── Toast ─────────────────────────────────────
   let _toastTimer;
-  function _showToast(msg) {
+  function _toast(msg) {
     const t = els.toast;
     t.textContent = msg;
     t.classList.add('show');
@@ -306,6 +282,5 @@
     _toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
   }
 
-  // ── Boot ──────────────────────────────────────
   document.addEventListener('DOMContentLoaded', init);
 })();
