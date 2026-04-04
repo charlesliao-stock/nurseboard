@@ -8,7 +8,7 @@
   // ⚠️  正式部署前請更換為環境變數或後端驗證
   const ADMIN_CREDENTIALS = {
     username: 'admin',
-    password: 'nurse2024'
+    password: 'admin'
   };
   const SESSION_KEY = 'nurse_admin_session';
 
