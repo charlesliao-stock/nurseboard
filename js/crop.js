@@ -1,43 +1,45 @@
 /**
- * crop.js
+ * crop.js  v2
  * 互動式相片裁切工具
- * 支援：縮放（滑桿 + 滾輪）、拖曳平移、形狀預覽（圓/方/圓角）
+ * 修正：s.img null guard、open() 完整重置、事件只綁一次
  */
 
 const CropTool = (() => {
+
   // ── State ─────────────────────────────────────
   const s = {
     img: null,
-    frameW: 320, frameH: 320,  // 裁切框顯示尺寸（px）
+    frameW: 320, frameH: 320,
     frameShape: 'circle',
-    scale: 1,       // 圖片縮放倍率（相對於 cover-fit）
-    minScale: 1,    // cover-fit 比例（最小值）
+    scale: 1,
+    minScale: 1,
     maxScale: 4,
-    offsetX: 0, offsetY: 0,   // 圖片左上角在 frame 內的偏移（px）
+    offsetX: 0, offsetY: 0,
     dragging: false,
     lastMX: 0, lastMY: 0,
-    // callbacks
     onConfirm: null,
-    onCancel:  null
+    onCancel:  null,
+    ready: false    // ← 圖片載入完成才允許互動
   };
 
   let _canvas = null, _ctx = null;
-  let _container = null;
+  let _built = false;   // DOM 只建一次
 
-  // ── Build DOM ────────────────────────────────
+  // ── Build DOM + 綁事件（只執行一次）────────────
   function _buildUI() {
-    // Prevent double-build
-    if (document.getElementById('cropToolModal')) return;
+    if (_built) return;
+    _built = true;
 
     const overlay = document.createElement('div');
     overlay.id = 'cropToolModal';
+    overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(13,45,53,.65);backdrop-filter:blur(6px);align-items:center;justify-content:center;z-index:400;';
     overlay.innerHTML = `
 <div class="ct-box">
   <h3 class="ct-title">裁切相片</h3>
   <div class="ct-frame-wrap" id="ctFrameWrap">
-    <canvas id="ctCanvas"></canvas>
-    <div class="ct-mask" id="ctMask"></div>
-    <div class="ct-hint" id="ctHint">拖曳移動　滾輪縮放</div>
+    <canvas id="ctCanvas" style="display:block;cursor:grab;"></canvas>
+    <div class="ct-loading" id="ctLoading">載入中…</div>
+    <div class="ct-hint" id="ctHint" style="opacity:0">拖曳移動　滾輪縮放</div>
   </div>
   <div class="ct-controls">
     <div class="ct-zoom-row">
@@ -61,23 +63,74 @@ const CropTool = (() => {
 
     _canvas = document.getElementById('ctCanvas');
     _ctx    = _canvas.getContext('2d');
-    _container = document.getElementById('ctFrameWrap');
 
-    // Events
+    // ── 所有事件只在這裡綁定一次 ────────────────
     document.getElementById('ctCancel').addEventListener('click', _cancel);
     document.getElementById('ctConfirm').addEventListener('click', _confirm);
-    document.getElementById('ctZoom').addEventListener('input', _onZoomSlider);
-    _canvas.addEventListener('mousedown', _onMouseDown);
-    _canvas.addEventListener('mousemove', _onMouseMove);
-    _canvas.addEventListener('mouseup',   _onMouseUp);
-    _canvas.addEventListener('mouseleave',_onMouseUp);
-    _canvas.addEventListener('wheel', _onWheel, { passive: false });
-    _canvas.addEventListener('touchstart', _onTouchStart, { passive: false });
-    _canvas.addEventListener('touchmove',  _onTouchMove,  { passive: false });
-    _canvas.addEventListener('touchend',   _onMouseUp);
+
+    document.getElementById('ctZoom').addEventListener('input', e => {
+      if (!s.ready) return;   // ← guard
+      _setZoom(+e.target.value);
+    });
+
+    _canvas.addEventListener('mousedown', e => {
+      if (!s.ready) return;
+      s.dragging = true;
+      s.lastMX = e.clientX; s.lastMY = e.clientY;
+      _canvas.style.cursor = 'grabbing';
+    });
+    _canvas.addEventListener('mousemove', e => {
+      if (!s.ready || !s.dragging) return;
+      s.offsetX += e.clientX - s.lastMX;
+      s.offsetY += e.clientY - s.lastMY;
+      s.lastMX = e.clientX; s.lastMY = e.clientY;
+      _clampOffset(); _draw();
+    });
+    const _stopDrag = () => { s.dragging = false; if (_canvas) _canvas.style.cursor = 'grab'; };
+    _canvas.addEventListener('mouseup',    _stopDrag);
+    _canvas.addEventListener('mouseleave', _stopDrag);
+
+    _canvas.addEventListener('wheel', e => {
+      if (!s.ready) return;
+      e.preventDefault();
+      const rect = _canvas.getBoundingClientRect();
+      const pct  = Math.round(s.scale / s.minScale * 100);
+      _setZoom(pct - e.deltaY * 0.08, e.clientX - rect.left, e.clientY - rect.top);
+    }, { passive: false });
+
+    let _lastPinch = 0;
+    _canvas.addEventListener('touchstart', e => {
+      if (!s.ready) return;
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        s.dragging = true;
+        s.lastMX = e.touches[0].clientX; s.lastMY = e.touches[0].clientY;
+      } else if (e.touches.length === 2) {
+        _lastPinch = _pinchDist(e);
+      }
+    }, { passive: false });
+
+    _canvas.addEventListener('touchmove', e => {
+      if (!s.ready) return;
+      e.preventDefault();
+      if (e.touches.length === 1 && s.dragging) {
+        s.offsetX += e.touches[0].clientX - s.lastMX;
+        s.offsetY += e.touches[0].clientY - s.lastMY;
+        s.lastMX = e.touches[0].clientX; s.lastMY = e.touches[0].clientY;
+        _clampOffset(); _draw();
+      } else if (e.touches.length === 2 && _lastPinch > 0) {
+        const d = _pinchDist(e);
+        const pct = Math.round(s.scale / s.minScale * 100 * d / _lastPinch);
+        _lastPinch = d;
+        _setZoom(pct);
+      }
+    }, { passive: false });
+
+    _canvas.addEventListener('touchend', _stopDrag);
 
     document.querySelectorAll('.ct-shape-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (!s.ready) return;
         document.querySelectorAll('.ct-shape-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         s.frameShape = btn.dataset.shape;
@@ -86,29 +139,41 @@ const CropTool = (() => {
     });
   }
 
-  // ── Open ─────────────────────────────────────
+  // ── Open ──────────────────────────────────────
   function open({ file, shape, onConfirm, onCancel }) {
     _buildUI();
+
+    // 每次開啟前完整重置狀態
+    s.ready      = false;
+    s.img        = null;
+    s.dragging   = false;
     s.onConfirm  = onConfirm;
     s.onCancel   = onCancel;
     s.frameShape = shape || 'circle';
 
-    // Sync shape button
+    // 同步形狀按鈕
     document.querySelectorAll('.ct-shape-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.shape === s.frameShape);
     });
 
-    const modal = document.getElementById('cropToolModal');
-    modal.style.display = 'flex';
-    document.getElementById('ctHint').style.opacity = '1';
-    setTimeout(() => { document.getElementById('ctHint').style.opacity = '0'; }, 2400);
+    // 重置滑桿
+    const zoomEl = document.getElementById('ctZoom');
+    zoomEl.value = 100;
+    document.getElementById('ctZoomVal').textContent = '100%';
 
+    // 顯示 loading，隱藏 canvas 內容
+    document.getElementById('ctLoading').style.display = 'flex';
+    _canvas.style.opacity = '0';
+
+    // 顯示 modal
+    document.getElementById('cropToolModal').style.display = 'flex';
+
+    // 非同步載入圖片
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       s.img = img;
 
-      // Canvas display size = 320×320 (square frame)
       const DISPLAY = 320;
       s.frameW = DISPLAY; s.frameH = DISPLAY;
       _canvas.width  = DISPLAY;
@@ -116,61 +181,62 @@ const CropTool = (() => {
       _canvas.style.width  = DISPLAY + 'px';
       _canvas.style.height = DISPLAY + 'px';
 
-      // Cover-fit scale as minimum
       const iw = img.naturalWidth, ih = img.naturalHeight;
       s.minScale = Math.max(DISPLAY / iw, DISPLAY / ih);
-      s.scale = s.minScale;
+      s.scale    = s.minScale;
+      s.offsetX  = (DISPLAY - iw * s.scale) / 2;
+      s.offsetY  = (DISPLAY - ih * s.scale) / 2;
 
-      // Center
-      s.offsetX = (DISPLAY - iw * s.scale) / 2;
-      s.offsetY = (DISPLAY - ih * s.scale) / 2;
+      // 圖片載入完成，允許互動
+      s.ready = true;
 
-      document.getElementById('ctZoom').value = 100;
-      document.getElementById('ctZoomVal').textContent = '100%';
+      // 顯示 canvas，隱藏 loading
+      document.getElementById('ctLoading').style.display = 'none';
+      _canvas.style.opacity = '1';
+
+      // 提示淡出
+      const hint = document.getElementById('ctHint');
+      hint.style.opacity = '1';
+      setTimeout(() => { hint.style.opacity = '0'; }, 2400);
 
       _draw();
       URL.revokeObjectURL(url);
     };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      _cancel();
+    };
     img.src = url;
   }
 
-  // ── Draw ─────────────────────────────────────
+  // ── Draw ──────────────────────────────────────
   function _draw() {
-    if (!_ctx || !s.img) return;
+    if (!_ctx || !s.img || !s.ready) return;
     const ctx = _ctx;
     const W = s.frameW, H = s.frameH;
 
     ctx.clearRect(0, 0, W, H);
-
-    // Checkerboard background
     _drawChecker(ctx, W, H);
 
-    // Image
     const iw = s.img.naturalWidth, ih = s.img.naturalHeight;
     ctx.drawImage(s.img, s.offsetX, s.offsetY, iw * s.scale, ih * s.scale);
 
-    // Dim outside mask
+    // 暗化遮罩
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,.45)';
     ctx.fillRect(0, 0, W, H);
-
-    // Cut out shape
     ctx.globalCompositeOperation = 'destination-out';
-    ctx.beginPath();
-    _shapePath(ctx, W, H);
-    ctx.fill();
+    ctx.beginPath(); _shapePath(ctx, W, H); ctx.fill();
     ctx.restore();
 
-    // Shape border
+    // 形狀邊框
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,.7)';
+    ctx.strokeStyle = 'rgba(255,255,255,.75)';
     ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    _shapePath(ctx, W, H);
-    ctx.stroke();
+    ctx.beginPath(); _shapePath(ctx, W, H); ctx.stroke();
     ctx.restore();
 
-    // Rule-of-thirds grid
+    // 三等分格線
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,.15)';
     ctx.lineWidth = 0.5;
@@ -180,35 +246,35 @@ const CropTool = (() => {
   }
 
   function _drawChecker(ctx, W, H) {
-    const size = 12;
-    for (let x = 0; x < W; x += size)
-      for (let y = 0; y < H; y += size) {
-        ctx.fillStyle = ((x/size + y/size) % 2 === 0) ? '#ccc' : '#aaa';
-        ctx.fillRect(x, y, size, size);
+    const sz = 12;
+    for (let x = 0; x < W; x += sz)
+      for (let y = 0; y < H; y += sz) {
+        ctx.fillStyle = ((x/sz + y/sz) % 2 === 0) ? '#ccc' : '#aaa';
+        ctx.fillRect(x, y, sz, sz);
       }
   }
 
   function _shapePath(ctx, W, H) {
-    const pad = 4;
+    const p = 4;
     if (s.frameShape === 'circle') {
-      ctx.arc(W/2, H/2, W/2 - pad, 0, Math.PI*2);
+      ctx.arc(W/2, H/2, W/2 - p, 0, Math.PI*2);
     } else if (s.frameShape === 'rounded') {
-      const r = (W - pad*2) * 0.1;
-      const x = pad, y = pad, w = W - pad*2, h = H - pad*2;
+      const r = (W - p*2) * 0.1;
+      const x = p, y = p, w = W-p*2, h = H-p*2;
       ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
       ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
       ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
       ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
     } else {
-      ctx.rect(pad, pad, W-pad*2, H-pad*2);
+      ctx.rect(p, p, W-p*2, H-p*2);
     }
   }
 
-  // ── Zoom ─────────────────────────────────────
+  // ── Zoom ──────────────────────────────────────
   function _setZoom(pct, pivotX, pivotY) {
-    const targetScale = s.minScale * (pct / 100);
-    const newScale    = Math.max(s.minScale, Math.min(s.maxScale * s.minScale, targetScale));
-    const ratio       = newScale / s.scale;
+    if (!s.ready || !s.img) return;   // ← guard
+    const newScale = Math.max(s.minScale, Math.min(s.maxScale * s.minScale, s.minScale * (pct / 100)));
+    const ratio    = newScale / s.scale;
     const px = pivotX ?? s.frameW / 2;
     const py = pivotY ?? s.frameH / 2;
     s.offsetX = px - ratio * (px - s.offsetX);
@@ -216,107 +282,50 @@ const CropTool = (() => {
     s.scale   = newScale;
     _clampOffset();
     _draw();
-    const pctActual = Math.round(s.scale / s.minScale * 100);
-    document.getElementById('ctZoom').value    = pctActual;
-    document.getElementById('ctZoomVal').textContent = pctActual + '%';
+    const actual = Math.round(s.scale / s.minScale * 100);
+    document.getElementById('ctZoom').value = actual;
+    document.getElementById('ctZoomVal').textContent = actual + '%';
   }
 
-  function _onZoomSlider(e) { _setZoom(+e.target.value); }
-
-  function _onWheel(e) {
-    e.preventDefault();
-    const rect = _canvas.getBoundingClientRect();
-    const px   = e.clientX - rect.left;
-    const py   = e.clientY - rect.top;
-    const pct  = Math.round(s.scale / s.minScale * 100);
-    _setZoom(pct - e.deltaY * 0.08, px, py);
-  }
-
-  // ── Drag ─────────────────────────────────────
-  function _onMouseDown(e) {
-    s.dragging = true;
-    s.lastMX = e.clientX; s.lastMY = e.clientY;
-    _canvas.style.cursor = 'grabbing';
-  }
-  function _onMouseMove(e) {
-    if (!s.dragging) return;
-    s.offsetX += e.clientX - s.lastMX;
-    s.offsetY += e.clientY - s.lastMY;
-    s.lastMX = e.clientX; s.lastMY = e.clientY;
-    _clampOffset(); _draw();
-  }
-  function _onMouseUp() {
-    s.dragging = false;
-    _canvas.style.cursor = 'grab';
-  }
-
-  // ── Touch ─────────────────────────────────────
-  let _lastPinchDist = 0;
-  function _onTouchStart(e) {
-    e.preventDefault();
-    if (e.touches.length === 1) {
-      s.dragging = true;
-      s.lastMX = e.touches[0].clientX;
-      s.lastMY = e.touches[0].clientY;
-    } else if (e.touches.length === 2) {
-      _lastPinchDist = _pinchDist(e);
-    }
-  }
-  function _onTouchMove(e) {
-    e.preventDefault();
-    if (e.touches.length === 1 && s.dragging) {
-      s.offsetX += e.touches[0].clientX - s.lastMX;
-      s.offsetY += e.touches[0].clientY - s.lastMY;
-      s.lastMX = e.touches[0].clientX;
-      s.lastMY = e.touches[0].clientY;
-      _clampOffset(); _draw();
-    } else if (e.touches.length === 2) {
-      const dist  = _pinchDist(e);
-      const ratio = dist / _lastPinchDist;
-      _lastPinchDist = dist;
-      const pct = Math.round(s.scale / s.minScale * 100 * ratio);
-      _setZoom(pct);
-    }
-  }
-  function _pinchDist(e) {
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    return Math.sqrt(dx*dx + dy*dy);
-  }
-
-  // ── Clamp offset (prevent showing outside) ────
+  // ── Clamp ─────────────────────────────────────
   function _clampOffset() {
+    if (!s.img) return;   // ← guard
     const iw = s.img.naturalWidth  * s.scale;
     const ih = s.img.naturalHeight * s.scale;
     s.offsetX = Math.min(0, Math.max(s.frameW - iw, s.offsetX));
     s.offsetY = Math.min(0, Math.max(s.frameH - ih, s.offsetY));
   }
 
-  // ── Confirm ───────────────────────────────────
+  // ── Touch helper ──────────────────────────────
+  function _pinchDist(e) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  // ── Confirm / Cancel ──────────────────────────
   function _confirm() {
-    if (!s.img) return;
-    // Compute crop state scaled to full canvas (1280×720 space)
-    // The photo frame in canvas coords is provided via template
-    // We just return the scale & offset relative to the 320px display frame,
-    // and the canvas engine will apply them relative to the actual frame.
-    const displayScale   = s.frameW; // display size
+    if (!s.ready || !s.img) return;
+    const fw = s.frameW;
     const result = {
       img: s.img,
-      // Normalized values (0..1 relative to frame size)
       cropState: {
-        // scale: how many frame-widths tall/wide the image is
-        scale:   s.scale / displayScale * s.img.naturalWidth,
-        // offsetX/Y: fraction of frame size
-        offsetX: s.offsetX / displayScale,
-        offsetY: s.offsetY / displayScale
+        scale:   s.scale / fw * s.img.naturalWidth,
+        offsetX: s.offsetX / fw,
+        offsetY: s.offsetY / fw
       },
       shape: s.frameShape
     };
+    s.ready = false;
     _close();
     s.onConfirm?.(result);
   }
 
-  function _cancel() { _close(); s.onCancel?.(); }
+  function _cancel() {
+    s.ready = false;
+    _close();
+    s.onCancel?.();
+  }
 
   function _close() {
     const m = document.getElementById('cropToolModal');
