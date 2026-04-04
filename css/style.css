@@ -271,6 +271,17 @@ body {
   pointer-events: none;
   transition: opacity 1s;
 }
+.ct-loading {
+  position: absolute; inset: 0;
+  display: none; align-items: center; justify-content: center;
+  background: var(--teal-050); border-radius: var(--radius-md);
+  font-size: 13px; color: var(--ink-soft); gap: 8px;
+}
+.ct-loading::before {
+  content: ""; width: 16px; height: 16px;
+  border: 2px solid var(--teal-100); border-top-color: var(--teal-500);
+  border-radius: 50%; animation: spin .7s linear infinite; display: inline-block;
+}
 .ct-controls { margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; }
 .ct-zoom-row {
   display: flex; align-items: center; gap: 10px;
