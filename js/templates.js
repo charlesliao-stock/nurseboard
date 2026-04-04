@@ -334,6 +334,7 @@ const TemplateManager = (() => {
 
   // ── Storage Key ────────────────────────────────
   const STORAGE_KEY = 'nurse_templates';
+  const ENABLED_KEY = 'nurse_template_enabled';
 
   // ── Load templates (localStorage overrides defaults) ──
   function load() {
@@ -362,5 +363,80 @@ const TemplateManager = (() => {
     localStorage.removeItem(STORAGE_KEY);
   }
 
-  return { load, save, getById, reset, DEFAULT_TEMPLATES };
+  // ── Template enabled/disabled ─────────────────
+  function getEnabledMap() {
+    try {
+      const raw = localStorage.getItem(ENABLED_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    // Default: all enabled
+    const map = {};
+    load().forEach(t => { map[t.id] = true; });
+    return map;
+  }
+
+  function setEnabled(id, enabled) {
+    const map = getEnabledMap();
+    map[id] = enabled;
+    localStorage.setItem(ENABLED_KEY, JSON.stringify(map));
+  }
+
+  function loadEnabled() {
+    const all = load();
+    const map = getEnabledMap();
+    return all.filter(t => map[t.id] !== false);
+  }
+
+  return { load, save, getById, reset, DEFAULT_TEMPLATES, getEnabledMap, setEnabled, loadEnabled };
+})();
+
+// ── FieldManager ──────────────────────────────────────
+const FieldManager = (() => {
+  const STORAGE_KEY = 'nurse_fields';
+
+  const DEFAULT_FIELDS = [
+    { id: 'unit',  label: '單位／科別',  type: 'text' },
+    { id: 'name',  label: '護理師姓名',  type: 'text' },
+    { id: 'title', label: '職稱',        type: 'text' },
+    { id: 'deed',  label: '優良事蹟',    type: 'textarea' },
+    { id: 'date',  label: '表揚日期',    type: 'date' },
+  ];
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved) && saved.length > 0) return saved;
+      }
+    } catch(e) {}
+    return JSON.parse(JSON.stringify(DEFAULT_FIELDS));
+  }
+
+  function save(fields) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(fields));
+  }
+
+  function addField(label, type) {
+    const fields = load();
+    const id = 'field_' + Date.now();
+    fields.push({ id, label, type: type || 'text' });
+    save(fields);
+    return id;
+  }
+
+  function removeField(id) {
+    // Prevent removing built-in fields
+    const BUILT_IN = ['unit','name','title','deed','date'];
+    if (BUILT_IN.includes(id)) return false;
+    const fields = load().filter(f => f.id !== id);
+    save(fields);
+    return true;
+  }
+
+  function getById(id) {
+    return load().find(f => f.id === id) || null;
+  }
+
+  return { load, save, addField, removeField, getById, DEFAULT_FIELDS };
 })();

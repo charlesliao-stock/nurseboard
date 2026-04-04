@@ -16,12 +16,6 @@
   const $ = id => document.getElementById(id);
   const els = {
     templateGrid:       $('templateGrid'),
-    unitField:          $('unitField'),
-    nameField:          $('nameField'),
-    titleField:         $('titleField'),
-    deedField:          $('deedField'),
-    deedCount:          $('deedCount'),
-    dateField:          $('dateField'),
     photoDrop:          $('photoDrop'),
     photoDropInner:     $('photoDropInner'),
     photoInput:         $('photoInput'),
@@ -38,14 +32,13 @@
 
   // ── Init ───────────────────────────────────────
   function init() {
-    const today = new Date().toISOString().split('T')[0];
-    els.dateField.value = today;
-    state.formData.date = today;
-
-    state.templates = TemplateManager.load();
+    state.templates = TemplateManager.loadEnabled();
 
     // Init main canvas FIRST
     CanvasEngine.init(els.previewCanvas);
+
+    // Build form fields dynamically
+    _buildFormFields();
 
     // Render thumbnails (isolated instances)
     _renderTemplateThumbs();
@@ -53,10 +46,14 @@
     // Auto-select first
     if (state.templates.length > 0) _selectTemplate(state.templates[0].id);
 
-    _bindFormListeners();
     _bindPhotoListeners();
     _bindActionListeners();
     _bindResize();
+
+    // Set default date
+    const today = new Date().toISOString().split('T')[0];
+    const dateEl = document.getElementById('field_date');
+    if (dateEl) { dateEl.value = today; state.formData['date'] = today; }
   }
 
   // ── Template Thumbnails ───────────────────────
@@ -93,19 +90,67 @@
     _renderPreview();
   }
 
-  // ── Form Listeners ────────────────────────────
-  function _bindFormListeners() {
-    const fieldMap = {
-      unit: els.unitField, name: els.nameField,
-      title: els.titleField, deed: els.deedField, date: els.dateField
-    };
-    Object.entries(fieldMap).forEach(([key, el]) => {
-      el.addEventListener('input', () => {
-        state.formData[key] = el.value;
-        if (key === 'deed') els.deedCount.textContent = el.value.length;
+  // ── Dynamic Form Fields ───────────────────────
+  function _buildFormFields() {
+    const section = document.getElementById('dynamicFields');
+    if (!section) return;
+    section.innerHTML = '';
+    const fields = FieldManager.load();
+
+    fields.forEach(f => {
+      const group = document.createElement('div');
+      group.className = 'field-group';
+
+      const label = document.createElement('label');
+      label.className = 'field-label';
+      label.setAttribute('for', 'field_' + f.id);
+      label.textContent = f.label;
+      group.appendChild(label);
+
+      let input;
+      if (f.type === 'textarea') {
+        input = document.createElement('textarea');
+        input.className = 'field-textarea';
+        input.rows = 4;
+        input.maxLength = 200;
+        input.placeholder = f.label + '…';
+
+        // char counter
+        const counter = document.createElement('span');
+        counter.className = 'char-count';
+        counter.innerHTML = `<span id="count_${f.id}">0</span>/200`;
+        input.addEventListener('input', () => {
+          document.getElementById('count_' + f.id).textContent = input.value.length;
+        });
+        group.appendChild(input);
+        group.appendChild(counter);
+      } else if (f.type === 'date') {
+        input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'field-input';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'field-input';
+        input.maxLength = f.id === 'name' ? 10 : 30;
+        input.placeholder = '例：' + f.label;
+        if (f.id === 'name') input.classList.add('field-input--large');
+      }
+
+      input.id = 'field_' + f.id;
+      input.addEventListener('input', () => {
+        state.formData[f.id] = input.value;
         _renderPreview();
       });
+
+      if (f.type !== 'textarea') group.appendChild(input);
+      section.appendChild(group);
     });
+  }
+
+  // ── Form Listeners ────────────────────────────
+  function _bindFormListeners() {
+    // kept for compatibility but fields are bound in _buildFormFields
   }
 
   // ── Photo Listeners ───────────────────────────

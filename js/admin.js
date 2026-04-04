@@ -50,6 +50,7 @@
     $('btnAddPhoto').addEventListener('click', () => _addElement('photo'));
     $('propDeleteEl').addEventListener('click', _deleteSelectedEl);
     $('photoDeleteEl').addEventListener('click', _deleteSelectedEl);
+    $('btnAddField').addEventListener('click', _openAddFieldModal);
 
     // Properties panel live update
     ['propX','propY','propW','propH','propFontSize','propFontWeight',
@@ -97,6 +98,7 @@
     $('adminLayout').hidden = false;
     adminState.templates = TemplateManager.load();
     _renderTemplateList();
+    _renderFieldList();
     if (adminState.templates.length > 0) {
       _loadTemplate(adminState.templates[0].id);
     }
@@ -106,12 +108,29 @@
   function _renderTemplateList() {
     const list = $('adminTemplateList');
     list.innerHTML = '';
+    const enabledMap = TemplateManager.getEnabledMap();
     adminState.templates.forEach(tpl => {
+      const enabled = enabledMap[tpl.id] !== false;
       const li = document.createElement('li');
       li.dataset.id = tpl.id;
-      li.innerHTML = `<span class="tl-dot"></span>${tpl.name}`;
-      li.addEventListener('click', () => _loadTemplate(tpl.id));
+      if (!enabled) li.classList.add('disabled');
+      li.innerHTML = `<span class="tl-dot"></span><span class="tl-name">${tpl.name}</span>`;
+
+      // Toggle button
+      const tog = document.createElement('button');
+      tog.className = 'tl-toggle' + (enabled ? ' on' : '');
+      tog.title = enabled ? '停用' : '啟用';
+      tog.addEventListener('click', e => {
+        e.stopPropagation();
+        const nowEnabled = tog.classList.toggle('on');
+        li.classList.toggle('disabled', !nowEnabled);
+        tog.title = nowEnabled ? '停用' : '啟用';
+        TemplateManager.setEnabled(tpl.id, nowEnabled);
+      });
+      li.appendChild(tog);
+
       if (tpl.id === adminState.activeTemplateId) li.classList.add('active');
+      li.addEventListener('click', () => _loadTemplate(tpl.id));
       list.appendChild(li);
     });
   }
@@ -355,7 +374,20 @@
       $('propsEmpty').hidden  = true;
       $('propsText').hidden   = false;
       $('propsPhoto').hidden  = true;
-      $('propBindField').value  = el.bindField || 'unit';
+
+      // Dynamically populate bindField options from FieldManager
+      const sel = $('propBindField');
+      sel.innerHTML = '';
+      FieldManager.load().forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f.id; opt.textContent = f.label;
+        sel.appendChild(opt);
+      });
+      const customOpt = document.createElement('option');
+      customOpt.value = 'custom'; customOpt.textContent = '自訂文字';
+      sel.appendChild(customOpt);
+
+      sel.value = el.bindField || 'unit';
       $('propCustomText').value = el.customText || '';
       $('propX').value          = el.x;
       $('propY').value          = el.y;
@@ -538,7 +570,82 @@
   }
 
   function _placeholderData() {
-    return { unit: '單位名稱', name: '姓　名', title: '護理師', deed: '優良事蹟描述', date: '' };
+    const data = {};
+    FieldManager.load().forEach(f => { data[f.id] = f.label; });
+    return data;
+  }
+
+  // ── Field Manager ─────────────────────────────
+  function _renderFieldList() {
+    const list = $('fieldList');
+    if (!list) return;
+    list.innerHTML = '';
+    const BUILT_IN = ['unit','name','title','deed','date'];
+    FieldManager.load().forEach(f => {
+      const li = document.createElement('li');
+      const isBuiltIn = BUILT_IN.includes(f.id);
+      li.innerHTML = `
+        <span class="fl-label">${f.label}</span>
+        <span class="fl-type">${f.type === 'textarea' ? '長文字' : f.type === 'date' ? '日期' : '文字'}</span>
+        ${isBuiltIn
+          ? '<span class="fl-builtin">內建</span>'
+          : `<button class="fl-del" data-id="${f.id}" title="刪除">✕</button>`
+        }
+      `;
+      if (!isBuiltIn) {
+        li.querySelector('.fl-del').addEventListener('click', () => {
+          if (!confirm(`確定刪除欄位「${f.label}」？`)) return;
+          FieldManager.removeField(f.id);
+          _renderFieldList();
+          _showToast('已刪除欄位');
+        });
+      }
+      list.appendChild(li);
+    });
+  }
+
+  function _openAddFieldModal() {
+    // Build modal
+    let modal = $('addFieldModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'addFieldModal';
+      modal.className = 'add-field-modal';
+      modal.innerHTML = `
+        <div class="add-field-box">
+          <h3>新增欄位</h3>
+          <div class="field-group">
+            <label class="field-label">欄位名稱</label>
+            <input type="text" id="newFieldLabel" class="field-input" placeholder="例：員工編號" maxlength="20">
+          </div>
+          <div class="field-group">
+            <label class="field-label">輸入類型</label>
+            <select id="newFieldType" class="field-input">
+              <option value="text">單行文字</option>
+              <option value="textarea">多行文字</option>
+              <option value="date">日期</option>
+            </select>
+          </div>
+          <div class="add-field-actions">
+            <button class="btn btn--outline btn--sm" id="btnCancelField">取消</button>
+            <button class="btn btn--primary btn--sm" id="btnConfirmField">新增</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      $('btnCancelField').addEventListener('click', () => { modal.hidden = true; });
+      $('btnConfirmField').addEventListener('click', () => {
+        const label = $('newFieldLabel').value.trim();
+        if (!label) { $('newFieldLabel').focus(); return; }
+        FieldManager.addField(label, $('newFieldType').value);
+        modal.hidden = true;
+        _renderFieldList();
+        _showToast(`已新增欄位「${label}」`);
+      });
+    }
+    $('newFieldLabel').value = '';
+    $('newFieldType').value = 'text';
+    modal.hidden = false;
+    setTimeout(() => $('newFieldLabel').focus(), 50);
   }
 
   // ── Toast ─────────────────────────────────────

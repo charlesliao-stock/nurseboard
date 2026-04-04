@@ -158,22 +158,30 @@ function createCanvasInstance(canvasEl) {
   }
 
   // ── Text Element ─────────────────────────────
-  function _drawTextElement(ctx, el, text) {
+  function _drawTextElement(ctx, el, resolved) {
+    const text = typeof resolved === 'object' ? resolved.text : resolved;
+    const isPlaceholder = typeof resolved === 'object' ? resolved.isPlaceholder : false;
     if (!text && !el.bgColor) return;
     ctx.save();
     if (el.bgColor) { ctx.fillStyle = el.bgColor; ctx.fillRect(el.x, el.y, el.width, el.height); }
     if (text) {
       const ff = el.serif ? "'Noto Serif TC',serif" : "'Noto Sans TC',sans-serif";
-      ctx.font = `${el.fontWeight||400} ${el.fontSize||16}px ${ff}`;
-      ctx.fillStyle = el.color || '#1a2126';
+      // Placeholder: use smaller font and muted color
+      const fs = isPlaceholder ? Math.max(12, Math.round((el.fontSize || 16) * 0.65)) : (el.fontSize || 16);
+      ctx.font = `${isPlaceholder ? 400 : (el.fontWeight||400)} ${fs}px ${ff}`;
+      ctx.fillStyle = isPlaceholder ? 'rgba(120,150,160,0.55)' : (el.color || '#1a2126');
       ctx.textBaseline = 'top';
       const align = el.align || 'left';
       let ax = el.x;
       if (align === 'center') { ctx.textAlign='center'; ax = el.x + el.width/2; }
       else if (align === 'right') { ctx.textAlign='right'; ax = el.x + el.width; }
       else ctx.textAlign = 'left';
-      if (el.wrap) _drawWrapped(ctx, text, ax, el.x, el.y, el.width, el.height, el.fontSize, el.lineHeight||1.65);
-      else { const oy = Math.max(0,(el.height-el.fontSize)/2); ctx.fillText(text, ax, el.y+oy, el.width); }
+      if (!isPlaceholder && el.wrap) {
+        _drawWrapped(ctx, text, ax, el.x, el.y, el.width, el.height, fs, el.lineHeight||1.65);
+      } else {
+        const oy = Math.max(0,(el.height-fs)/2);
+        ctx.fillText(text, ax, el.y+oy, el.width);
+      }
     }
     ctx.restore();
   }
@@ -200,11 +208,35 @@ function createCanvasInstance(canvasEl) {
   }
 
   // ── Resolve text ─────────────────────────────
+  // Returns { text, isPlaceholder }
   function _resolveText(el, fd) {
-    if (el.bindField === 'custom') return el.customText || '';
-    if (!fd) return '';
-    if (el.bindField === 'date' && fd.date) return _fmtDate(fd.date);
-    return fd[el.bindField] || '';
+    if (el.bindField === 'custom') return { text: el.customText || '', isPlaceholder: false };
+    if (!fd) return { text: '', isPlaceholder: false };
+
+    const value = fd[el.bindField] || '';
+
+    if (el.bindField === 'date') {
+      if (value) return { text: _fmtDate(value), isPlaceholder: false };
+      // Fallback label
+      const label = _fieldLabel(el.bindField);
+      return { text: label, isPlaceholder: true };
+    }
+
+    if (value) return { text: value, isPlaceholder: false };
+
+    // No value — show field label as placeholder
+    const label = _fieldLabel(el.bindField);
+    return { text: label, isPlaceholder: true };
+  }
+
+  function _fieldLabel(fieldId) {
+    if (typeof FieldManager !== 'undefined') {
+      const f = FieldManager.getById(fieldId);
+      if (f) return f.label;
+    }
+    // Fallback for built-in fields if FieldManager not available
+    const map = { unit:'單位／科別', name:'護理師姓名', title:'職稱', deed:'優良事蹟', date:'表揚日期' };
+    return map[fieldId] || fieldId;
   }
 
   function _fmtDate(v) {
