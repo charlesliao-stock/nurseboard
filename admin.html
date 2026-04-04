@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>後台管理 — 優良護理師表揚系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;600;700&family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="admin-body">
+
+<!-- Login Screen -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="logo-icon">✦</span>
+      <h1>後台管理</h1>
+      <p>優良護理師表揚系統</p>
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="adminUser">帳號</label>
+      <input type="text" id="adminUser" class="field-input" placeholder="admin">
+    </div>
+    <div class="field-group">
+      <label class="field-label" for="adminPass">密碼</label>
+      <input type="password" id="adminPass" class="field-input" placeholder="••••••">
+    </div>
+    <button class="btn btn--primary btn--full" id="loginBtn">登入</button>
+    <p class="login-error" id="loginError" hidden>帳號或密碼錯誤</p>
+    <a href="index.html" class="back-link">← 返回使用者介面</a>
+  </div>
+</div>
+
+<!-- Admin Dashboard (hidden until login) -->
+<div class="admin-layout" id="adminLayout" hidden>
+
+  <!-- Admin Header -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">✦</span>
+        <span class="logo-text">後台管理<em>模板編輯器</em></span>
+      </div>
+      <nav class="header-nav">
+        <a href="index.html" class="admin-link">← 使用者介面</a>
+        <button class="btn btn--outline btn--sm" id="logoutBtn">登出</button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="admin-content">
+
+    <!-- Template List Sidebar -->
+    <aside class="admin-sidebar">
+      <div class="sidebar-header">
+        <h3>模板列表</h3>
+        <button class="btn btn--primary btn--sm" id="btnNewTemplate">＋ 新增</button>
+      </div>
+      <ul class="template-list" id="adminTemplateList">
+        <!-- Populated by admin.js -->
+      </ul>
+    </aside>
+
+    <!-- Template Editor -->
+    <div class="admin-editor" id="adminEditor">
+
+      <!-- Editor Toolbar -->
+      <div class="editor-toolbar">
+        <div class="toolbar-left">
+          <input type="text" id="templateName" class="toolbar-name" placeholder="模板名稱">
+          <select id="templateStyle" class="toolbar-select">
+            <option value="formal">正式風</option>
+            <option value="warm">溫暖風</option>
+            <option value="japanese">日系風</option>
+            <option value="minimal">簡約風</option>
+            <option value="vivid">活潑風</option>
+          </select>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn--outline btn--sm" id="btnAddText">＋ 文字框</button>
+          <button class="btn btn--outline btn--sm" id="btnAddPhoto">＋ 相片框</button>
+          <button class="btn btn--primary btn--sm" id="btnSaveTemplate">儲存模板</button>
+          <button class="btn btn--danger btn--sm" id="btnDeleteTemplate">刪除</button>
+        </div>
+      </div>
+
+      <!-- Canvas Editor Area (16:9) -->
+      <div class="editor-canvas-wrap" id="editorCanvasWrap">
+        <canvas id="editorCanvas"></canvas>
+        <!-- Draggable overlays rendered here -->
+        <div class="editor-overlays" id="editorOverlays"></div>
+        <div class="editor-empty" id="editorEmpty">
+          <span>← 從左側選擇模板，或新增模板</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Properties Panel -->
+    <aside class="properties-panel" id="propertiesPanel">
+      <h3 class="props-title">元素屬性</h3>
+      <div class="props-empty" id="propsEmpty">請點選畫布上的元素</div>
+
+      <!-- Text Box Properties -->
+      <div class="props-group" id="propsText" hidden>
+        <h4>文字框</h4>
+        <div class="field-group">
+          <label class="field-label">綁定欄位</label>
+          <select id="propBindField" class="field-input">
+            <option value="unit">單位</option>
+            <option value="name">姓名</option>
+            <option value="title">職稱</option>
+            <option value="deed">優良事蹟</option>
+            <option value="date">日期</option>
+            <option value="custom">自訂文字</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">自訂文字（若選自訂）</label>
+          <input type="text" id="propCustomText" class="field-input" placeholder="輸入固定文字">
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">X</label>
+            <input type="number" id="propX" class="field-input">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Y</label>
+            <input type="number" id="propY" class="field-input">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">寬</label>
+            <input type="number" id="propW" class="field-input">
+          </div>
+          <div class="field-group">
+            <label class="field-label">高</label>
+            <input type="number" id="propH" class="field-input">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">字型大小</label>
+          <input type="number" id="propFontSize" class="field-input" value="24">
+        </div>
+        <div class="field-group">
+          <label class="field-label">字型粗細</label>
+          <select id="propFontWeight" class="field-input">
+            <option value="300">細 300</option>
+            <option value="400">正常 400</option>
+            <option value="500" selected>中粗 500</option>
+            <option value="600">粗 600</option>
+            <option value="700">特粗 700</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">文字顏色</label>
+          <input type="color" id="propColor" class="field-color" value="#1a2a3a">
+        </div>
+        <div class="field-group">
+          <label class="field-label">對齊</label>
+          <div class="align-btns">
+            <button class="align-btn active" data-align="left">左</button>
+            <button class="align-btn" data-align="center">中</button>
+            <button class="align-btn" data-align="right">右</button>
+          </div>
+        </div>
+        <button class="btn btn--danger btn--sm btn--full" id="propDeleteEl">刪除此元素</button>
+      </div>
+
+      <!-- Photo Frame Properties -->
+      <div class="props-group" id="propsPhoto" hidden>
+        <h4>相片框</h4>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">X</label>
+            <input type="number" id="photoX" class="field-input">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Y</label>
+            <input type="number" id="photoY" class="field-input">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label class="field-label">寬</label>
+            <input type="number" id="photoW" class="field-input">
+          </div>
+          <div class="field-group">
+            <label class="field-label">高</label>
+            <input type="number" id="photoH" class="field-input">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">形狀</label>
+          <select id="photoShape" class="field-input">
+            <option value="circle">圓形</option>
+            <option value="rect">方形</option>
+            <option value="rounded">圓角矩形</option>
+          </select>
+        </div>
+        <button class="btn btn--danger btn--sm btn--full" id="photoDeleteEl">刪除此元素</button>
+      </div>
+
+      <!-- Background Settings -->
+      <div class="props-group props-bg">
+        <h4>背景設定</h4>
+        <div class="field-group">
+          <label class="field-label">背景顏色</label>
+          <input type="color" id="bgColor" class="field-color" value="#EBF4F8">
+        </div>
+        <div class="field-group">
+          <label class="field-label">背景圖片</label>
+          <input type="file" id="bgImageInput" accept="image/*" class="field-input-file">
+        </div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="js/templates.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
