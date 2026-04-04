@@ -44,30 +44,8 @@
     <section class="panel-section editor-section">
       <h2 class="section-title">填寫內容</h2>
 
-      <div class="field-group">
-        <label class="field-label" for="unitField">單位／科別</label>
-        <input type="text" id="unitField" class="field-input" placeholder="例：內科加護病房" maxlength="30">
-      </div>
-
-      <div class="field-group">
-        <label class="field-label" for="nameField">護理師姓名</label>
-        <input type="text" id="nameField" class="field-input field-input--large" placeholder="例：王小明" maxlength="10">
-      </div>
-
-      <div class="field-group">
-        <label class="field-label" for="titleField">職稱</label>
-        <input type="text" id="titleField" class="field-input" placeholder="例：護理師、副護理長" maxlength="20">
-      </div>
-
-      <div class="field-group">
-        <label class="field-label" for="deedField">優良事蹟</label>
-        <textarea id="deedField" class="field-textarea" placeholder="請描述該護理師的優良事蹟…" rows="4" maxlength="200"></textarea>
-        <span class="char-count"><span id="deedCount">0</span>/200</span>
-      </div>
-
-      <div class="field-group">
-        <label class="field-label" for="dateField">表揚日期</label>
-        <input type="date" id="dateField" class="field-input">
+      <div id="dynamicFields">
+        <!-- Populated dynamically by app.js from FieldManager -->
       </div>
 
       <!-- Photo Upload -->
