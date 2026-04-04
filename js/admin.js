@@ -24,6 +24,9 @@
     scale: 1
   };
 
+  // ── Editor canvas instance (獨立於使用者端 CanvasEngine) ──
+  let _editorInst = null;
+
   // ── DOM refs ───────────────────────────────────
   const $ = id => document.getElementById(id);
 
@@ -139,10 +142,10 @@
   // ── Editor Canvas ─────────────────────────────
   function _renderEditorCanvas(tpl) {
     const canvas = $('editorCanvas');
-    canvas.width  = CanvasEngine.W;
-    canvas.height = CanvasEngine.H;
-    CanvasEngine.init(canvas);
-    CanvasEngine.render(tpl, _placeholderData());
+    // width set by createCanvasInstance
+    // height set by createCanvasInstance
+    _editorInst = createCanvasInstance(canvas);
+    _editorInst.render(tpl, _placeholderData());
     _fitEditorCanvas();
   }
 
@@ -152,10 +155,10 @@
     if (!canvas.width) return;
     const availW = wrap.clientWidth  - 48;
     const availH = wrap.clientHeight - 48;
-    const scale  = Math.min(availW / CanvasEngine.W, availH / CanvasEngine.H);
+    const scale  = Math.min(availW / 1280, availH / 720);
     adminState.scale = scale;
-    canvas.style.width  = Math.floor(CanvasEngine.W * scale) + 'px';
-    canvas.style.height = Math.floor(CanvasEngine.H * scale) + 'px';
+    canvas.style.width  = Math.floor(1280 * scale) + 'px';
+    canvas.style.height = Math.floor(720 * scale) + 'px';
     _positionOverlays();
   }
 
@@ -419,7 +422,7 @@
   function _loadBgImage(file) {
     const img = new Image();
     img.onload = () => {
-      CanvasEngine.setBgImage(img);
+      _editorInst && _editorInst.setBgImage(img);
       _reRenderCanvas();
     };
     img.src = URL.createObjectURL(file);
@@ -514,7 +517,7 @@
     adminState.activeTemplateId = null;
     _renderTemplateList();
     $('editorEmpty').style.display = '';
-    $('editorCanvas').getContext('2d').clearRect(0, 0, CanvasEngine.W, CanvasEngine.H);
+    _editorInst = null;
     $('editorOverlays').innerHTML = '';
     _hideAllProps();
     _showToast('已刪除模板');
@@ -528,8 +531,9 @@
   function _reRenderCanvas() {
     const tpl = _getActiveTpl();
     if (!tpl) return;
-    CanvasEngine.init($('editorCanvas'));
-    CanvasEngine.render(tpl, _placeholderData());
+    // 重用現有實例；若尚未建立則先建立
+    if (!_editorInst) _editorInst = createCanvasInstance($('editorCanvas'));
+    _editorInst.render(tpl, _placeholderData());
   }
 
   function _placeholderData() {
