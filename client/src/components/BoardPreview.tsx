@@ -154,6 +154,7 @@ export const BoardPreview = React.forwardRef<HTMLDivElement, BoardPreviewProps>(
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
+          zIndex: 1,
         }}
       >
         {/* Decorative background elements */}

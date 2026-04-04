@@ -203,31 +203,38 @@ export default function BoardGenerator() {
         </div>
 
         {/* Main layout: Left control + Right preview */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px", position: "relative" }}>
           {/* Left: Control Panel */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "24px", position: "relative", zIndex: 50 }}>
             {/* Template Selection */}
-            <Card style={{ padding: "20px" }}>
+            <Card style={{ padding: "20px", position: "relative", zIndex: 100, minHeight: "350px" }}>
               <h2 style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "12px" }}>
                 版型選擇
               </h2>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", maxHeight: "500px", overflowY: "auto" }}>
                 {templates.map((template) => (
                   <button
                     key={template.id}
                     onClick={() => setTemplateId(template.id)}
                     style={{
-                      padding: "12px",
+                      padding: "10px 8px",
                       borderRadius: "6px",
                       border: templateId === template.id ? "2px solid #FF69B4" : "1px solid #ddd",
                       background: templateId === template.id ? "#FFE4F0" : "#fff",
                       cursor: "pointer",
                       transition: "all 0.2s",
-                      fontSize: "12px",
+                      fontSize: "11px",
                       fontWeight: "500",
+                      position: "relative",
+                      zIndex: 101,
+                      textAlign: "center",
+                      minHeight: "50px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                     }}
                   >
-                    <div style={{ fontSize: "10px", color: template.accentColor }}>
+                    <div style={{ fontSize: "9px", color: template.accentColor, lineHeight: "1.2" }}>
                       {template.name}
                     </div>
                   </button>
@@ -396,7 +403,7 @@ export default function BoardGenerator() {
           </div>
 
           {/* Right: Live Preview */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", position: "relative", zIndex: 10 }}>
             <div style={{ fontSize: "14px", fontWeight: "bold", color: "#333" }}>
               即時預覽
             </div>

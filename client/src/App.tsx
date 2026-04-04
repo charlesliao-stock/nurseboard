@@ -12,10 +12,10 @@ function Router() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
-      <Route path="" component={Home} />
       <Route path="/board-generator" component={BoardGenerator} />
       <Route path="/board-history" component={BoardHistory} />
       <Route path="/404" component={NotFound} />
+      <Route path="/" component={Home} />
       {/* Final fallback route */}
       <Route component={NotFound} />
     </Switch>
