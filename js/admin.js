@@ -5,7 +5,10 @@
 
 (() => {
   // ── Config ─────────────────────────────────────
-  const ADMIN_CREDENTIALS = { username: 'admin', password: 'admin' };
+  const ADMIN_CREDENTIALS = {
+    username: 'admin',
+    password: 'admin'
+  };
   const SESSION_KEY = 'nurse_admin_session';
 
   // ── State ──────────────────────────────────────
@@ -22,13 +25,16 @@
   let _editorInst = null;
   const $ = id => document.getElementById(id);
 
+  // ── Init ───────────────────────────────────────
   function init() {
     if (sessionStorage.getItem(SESSION_KEY) === 'true') {
       _showAdmin();
     }
 
     $('loginBtn').addEventListener('click', _tryLogin);
-    $('adminPass').addEventListener('keydown', e => { if (e.key === 'Enter') _tryLogin(); });
+    $('adminPass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') _tryLogin();
+    });
     $('logoutBtn').addEventListener('click', _logout);
     $('btnNewTemplate').addEventListener('click', _newTemplate);
     $('btnSaveTemplate').addEventListener('click', _saveTemplate);
@@ -55,6 +61,8 @@
     });
 
     $('bgColor').addEventListener('input', _updateBgColor);
+    
+    // 背景圖片上傳監聽
     $('bgImageInput').addEventListener('change', e => {
       if (e.target.files[0]) _loadBgImage(e.target.files[0]);
     });
@@ -74,10 +82,12 @@
       $('adminPass').value = '';
     }
   }
+
   function _logout() {
     sessionStorage.removeItem(SESSION_KEY);
     location.reload();
   }
+
   function _showAdmin() {
     $('loginScreen').hidden = true;
     $('adminLayout').hidden = false;
@@ -134,16 +144,18 @@
     adminState.selectedElId = null;
     _hideAllProps();
 
-    // 如果模板有存背景圖，載入它
-    if (tpl.customBgImage) {
-      const img = new Image();
-      img.onload = () => {
-        if (_editorInst) _editorInst.setBgImage(img);
-        _reRenderCanvas();
-      };
-      img.src = tpl.customBgImage;
-    } else {
-      if (_editorInst) _editorInst.setBgImage(null);
+    // 載入模板時，重置編輯器背景圖
+    if (_editorInst) {
+      if (tpl.customBgImage) {
+        const img = new Image();
+        img.onload = () => {
+          _editorInst.setBgImage(img);
+          _reRenderCanvas();
+        };
+        img.src = tpl.customBgImage;
+      } else {
+        _editorInst.setBgImage(null);
+      }
     }
 
     _renderEditorCanvas(tpl);
@@ -151,6 +163,7 @@
     setTimeout(_fitEditorCanvas, 50);
   }
 
+  // ── Editor Canvas ─────────────────────────────
   function _renderEditorCanvas(tpl) {
     const canvas = $('editorCanvas');
     if (!_editorInst) _editorInst = createCanvasInstance(canvas);
@@ -162,7 +175,7 @@
     const wrap   = $('editorCanvasWrap');
     const canvas = $('editorCanvas');
     if (!canvas.width) return;
-    const scale  = Math.min((wrap.clientWidth-48)/1280, (wrap.clientHeight-48)/720);
+    const scale  = Math.min((wrap.clientWidth - 48) / 1280, (wrap.clientHeight - 48) / 720);
     adminState.scale = scale;
     canvas.style.width  = Math.floor(1280 * scale) + 'px';
     canvas.style.height = Math.floor(720 * scale) + 'px';
@@ -202,7 +215,7 @@
     _positionDiv(div, el, scale);
     const label = document.createElement('span');
     label.style.cssText = 'pointer-events:none;font-size:10px;padding:2px;';
-    label.textContent = el.bindField === 'custom' ? '自訂' : (el.bindField || '相片');
+    label.textContent = el.bindField === 'custom' ? '自訂' : (el.bindField || '欄位');
     div.appendChild(label);
     const handle = document.createElement('div');
     handle.className = 'el-handle';
@@ -308,14 +321,14 @@
     const tpl = _getActiveTpl(); if (tpl) { tpl.background = $('bgColor').value; _reRenderCanvas(); }
   }
 
-  // --- 關鍵修正：上傳時存為 Base64 ---
+  // --- 關鍵修正：上傳背景圖片並轉為 Base64 持久化 ---
   function _loadBgImage(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const base64Data = e.target.result;
       const tpl = _getActiveTpl();
       if (tpl) {
-        tpl.customBgImage = base64Data; // 儲存持久化資料
+        tpl.customBgImage = base64Data; // 儲存至模板物件
         const img = new Image();
         img.onload = () => {
           if (_editorInst) {
@@ -352,19 +365,24 @@
     const tpl = _getActiveTpl(); if (!tpl) return;
     tpl.name = $('templateName').value; tpl.style = $('templateStyle').value;
     TemplateManager.save(adminState.templates);
-    _renderTemplateList(); _showToast('✓ 模板與背景已成功儲存');
+    _renderTemplateList(); 
+    _showToast('✓ 模板與背景已成功儲存');
   }
 
   function _newTemplate() {
     const id = 'tpl_' + Date.now();
     const newTpl = { id, name: '新模板', style: 'formal', background: '#EBF4F8', elements: [], photoFrame: { id: 'photo_'+Date.now(), x: 860, y: 80, width: 320, height: 320, shape: 'circle', borderColor: '#2a8fa6', borderWidth: 4, shadow: true } };
-    adminState.templates.push(newTpl); TemplateManager.save(adminState.templates); _loadTemplate(id); _renderTemplateList();
+    adminState.templates.push(newTpl); 
+    TemplateManager.save(adminState.templates); 
+    _loadTemplate(id); 
+    _renderTemplateList();
   }
 
   function _deleteTemplate() {
-    if (!confirm('確定要刪除？')) return;
+    if (!confirm('確定要刪除此模板？')) return;
     adminState.templates = adminState.templates.filter(t => t.id !== adminState.activeTemplateId);
-    TemplateManager.save(adminState.templates); location.reload();
+    TemplateManager.save(adminState.templates); 
+    location.reload();
   }
 
   function _getActiveTpl() { return adminState.templates.find(t => t.id === adminState.activeTemplateId); }
@@ -386,7 +404,22 @@
     });
   }
 
-  function _showToast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600); }
+  function _openAddFieldModal() {
+    // 簡單實作新增欄位邏輯
+    const label = prompt('請輸入欄位名稱：');
+    if (label) {
+      FieldManager.addField(label, 'text');
+      _renderFieldList();
+      _showToast('已新增欄位');
+    }
+  }
+
+  function _showToast(msg) { 
+    const t = $('toast'); 
+    t.textContent = msg; 
+    t.classList.add('show'); 
+    setTimeout(() => t.classList.remove('show'), 2600); 
+  }
 
   document.addEventListener('DOMContentLoaded', init);
 })();
