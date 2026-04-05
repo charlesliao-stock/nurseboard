@@ -6,6 +6,7 @@
 
 (() => {
   const VERSION = '1.1.0';
+  const _bgImageCache = new Map(); // url → HTMLImageElement
 
   // ⚠️  正式部署前請更換為環境變數或後端驗證
   const ADMIN_CREDENTIALS = { username: 'admin', password: 'admin' };
