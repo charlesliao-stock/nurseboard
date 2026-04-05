@@ -33,7 +33,7 @@ function createCanvasInstance(canvasEl) {
         resolve(null);
       };
       // Append a cache-buster only for Drive thumbnail URLs to avoid stale 403s
-      img.src = url.includes('drive.google.com') ? url + '&_cb=' + Date.now() : url;
+      img.src = url;
     });
   }
 
