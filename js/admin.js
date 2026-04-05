@@ -155,10 +155,16 @@
     _editorInst = createCanvasInstance($('editorCanvas'));
 
     // If template has a Drive background URL, load it before rendering
+    // Use in-memory cache to avoid re-downloading the same image on every switch
     if (tpl.bgImageUrl) {
-      _setBgStatusLoading('載入背景圖片…');
-      await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
-      _setBgStatusLoading('');
+      if (_bgImageCache.has(tpl.bgImageUrl)) {
+        _editorInst.setBgImage(_bgImageCache.get(tpl.bgImageUrl));
+      } else {
+        _setBgStatusLoading('載入背景圖片…');
+        const img = await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
+        if (img) _bgImageCache.set(tpl.bgImageUrl, img);
+        _setBgStatusLoading('');
+      }
     }
 
     _editorInst.render(tpl, _placeholderData());
@@ -242,8 +248,9 @@
     tpl.bgImageUrl  = result.publicUrl;
     tpl.bgImageName = file.name;
 
-    // Load image into editor canvas
-    await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
+    // Load image into editor canvas and store in cache
+    const img = await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
+    if (img) _bgImageCache.set(tpl.bgImageUrl, img);
 
     // Re-render and update UI
     _editorInst.render(tpl, _placeholderData());
