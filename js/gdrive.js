@@ -121,7 +121,7 @@ const GDrive = (() => {
   // Drive thumbnail URL works cross-origin and supports canvas export
   // sz=w1280 gives up to 1280px wide — sufficient for 1280×720 backgrounds
   function getPublicUrl(fileId) {
-    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1280`;
+    return `https://drive.google.com/uc?export=view&id=${fileId}`;
   }
 
   // ── Upload background image (admin only) ──────
