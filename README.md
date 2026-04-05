@@ -68,7 +68,7 @@ const CLIENT_ID = '123456789-abcdefg.apps.googleusercontent.com';
 
 | 帳號 | 密碼 |
 |------|------|
-| admin | nurse2024 |
+| admin | admin |
 
 修改位置：`js/admin.js` 第 12–14 行
 
