@@ -19,6 +19,24 @@ function createCanvasInstance(canvasEl) {
   function clearUserPhoto() { _userPhoto = null; _cropState = null; }
   function setBgImage(img)  { _bgImage = img; }
 
+  // ── Load background from URL (cross-origin safe) ──
+  // Resolves with the Image object, or null on failure.
+  // Uses crossOrigin='anonymous' so canvas stays exportable.
+  function loadBgFromUrl(url) {
+    return new Promise((resolve) => {
+      if (!url) { resolve(null); return; }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload  = () => { _bgImage = img; resolve(img); };
+      img.onerror = () => {
+        console.warn('[Canvas] 背景圖片載入失敗，URL:', url);
+        resolve(null);
+      };
+      // Append a cache-buster only for Drive thumbnail URLs to avoid stale 403s
+      img.src = url.includes('drive.google.com') ? url + '&_cb=' + Date.now() : url;
+    });
+  }
+
   // ── Main render ──────────────────────────────
   function render(template, formData) {
     if (!ctx || !template) return;
@@ -94,27 +112,23 @@ function createCanvasInstance(canvasEl) {
   function _drawPhotoFrame(ctx, f) {
     const { x, y, width: fw, height: fh, shape, borderColor, borderWidth, shadow, glowColor } = f;
 
-    // Shadow layer (must be drawn before clip to avoid clipping shadow)
     if (shadow || glowColor) {
       ctx.save();
       ctx.shadowColor   = glowColor || 'rgba(0,0,0,.22)';
       ctx.shadowBlur    = glowColor ? 40 : 28;
       ctx.shadowOffsetX = glowColor ?  0 :  4;
       ctx.shadowOffsetY = glowColor ?  0 :  8;
-      // Draw a dummy filled shape just for shadow
-      ctx.fillStyle = (f.background || '#ffffff') + '01'; // nearly transparent
+      ctx.fillStyle = (f.background || '#ffffff') + '01';
       ctx.beginPath(); _clipPath(ctx, x, y, fw, fh, shape); ctx.fill();
       ctx.restore();
     }
 
-    // Clipped photo / placeholder
     ctx.save();
     ctx.beginPath(); _clipPath(ctx, x, y, fw, fh, shape); ctx.clip();
 
     if (_userPhoto) {
       _drawCroppedPhoto(ctx, x, y, fw, fh);
     } else {
-      // Gradient placeholder
       const g = ctx.createLinearGradient(x, y, x+fw, y+fh);
       g.addColorStop(0, 'rgba(42,143,166,.10)');
       g.addColorStop(1, 'rgba(42,143,166,.20)');
@@ -128,7 +142,6 @@ function createCanvasInstance(canvasEl) {
     }
     ctx.restore();
 
-    // Border
     if (borderColor && borderColor !== 'transparent' && borderWidth > 0) {
       ctx.save();
       ctx.strokeStyle = borderColor; ctx.lineWidth = borderWidth;
@@ -166,7 +179,6 @@ function createCanvasInstance(canvasEl) {
     if (el.bgColor) { ctx.fillStyle = el.bgColor; ctx.fillRect(el.x, el.y, el.width, el.height); }
     if (text) {
       const ff = el.serif ? "'Noto Serif TC',serif" : "'Noto Sans TC',sans-serif";
-      // Placeholder: use smaller font and muted color
       const fs = isPlaceholder ? Math.max(12, Math.round((el.fontSize || 16) * 0.65)) : (el.fontSize || 16);
       ctx.font = `${isPlaceholder ? 400 : (el.fontWeight||400)} ${fs}px ${ff}`;
       ctx.fillStyle = isPlaceholder ? 'rgba(120,150,160,0.55)' : (el.color || '#1a2126');
@@ -208,7 +220,6 @@ function createCanvasInstance(canvasEl) {
   }
 
   // ── Resolve text ─────────────────────────────
-  // Returns { text, isPlaceholder }
   function _resolveText(el, fd) {
     if (el.bindField === 'custom') return { text: el.customText || '', isPlaceholder: false };
     if (!fd) return { text: '', isPlaceholder: false };
@@ -217,14 +228,12 @@ function createCanvasInstance(canvasEl) {
 
     if (el.bindField === 'date') {
       if (value) return { text: _fmtDate(value), isPlaceholder: false };
-      // Fallback label
       const label = _fieldLabel(el.bindField);
       return { text: label, isPlaceholder: true };
     }
 
     if (value) return { text: value, isPlaceholder: false };
 
-    // No value — show field label as placeholder
     const label = _fieldLabel(el.bindField);
     return { text: label, isPlaceholder: true };
   }
@@ -234,7 +243,6 @@ function createCanvasInstance(canvasEl) {
       const f = FieldManager.getById(fieldId);
       if (f) return f.label;
     }
-    // Fallback for built-in fields if FieldManager not available
     const map = { unit:'單位／科別', name:'護理師姓名', title:'職稱', deed:'優良事蹟', date:'表揚日期' };
     return map[fieldId] || fieldId;
   }
@@ -271,7 +279,7 @@ function createCanvasInstance(canvasEl) {
     canvasEl.style.height = Math.floor(H*s) + 'px';
   }
 
-  return { render, setUserPhoto, clearUserPhoto, setBgImage, exportPNG, getBlob, fitToContainer, W, H };
+  return { render, setUserPhoto, clearUserPhoto, setBgImage, loadBgFromUrl, exportPNG, getBlob, fitToContainer, W, H };
 }
 
 // ── Global singleton for main preview canvas ─────────
@@ -282,15 +290,19 @@ const CanvasEngine = (() => {
     get W() { return 1280; },
     get H() { return 720;  }
   };
-  ['render','setUserPhoto','clearUserPhoto','setBgImage','exportPNG','getBlob','fitToContainer']
+  ['render','setUserPhoto','clearUserPhoto','setBgImage','loadBgFromUrl','exportPNG','getBlob','fitToContainer']
     .forEach(fn => { api[fn] = (...a) => _inst?.[fn](...a); });
   return api;
 })();
 
 // ── Thumbnail helper (isolated, no shared state) ─────
-function renderTemplateThumbnail(tpl) {
+// Supports async background image loading for Drive-backed templates
+async function renderTemplateThumbnail(tpl) {
   const mc   = document.createElement('canvas');
   const inst = createCanvasInstance(mc);
+  if (tpl.bgImageUrl) {
+    await inst.loadBgFromUrl(tpl.bgImageUrl);
+  }
   inst.render(tpl, {});
   return mc.toDataURL('image/png');
 }

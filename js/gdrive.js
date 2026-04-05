@@ -17,8 +17,9 @@ const GDrive = (() => {
   const SCOPES    = 'https://www.googleapis.com/auth/drive.file';
   // ────────────────────────────────────────────────
 
-  // 上傳目標：Drive 根目錄下的「優良護理師表揚」資料夾
-  const ROOT_FOLDER_NAME = '優良護理師表揚';
+  // 上傳目標：Drive 根目錄下的資料夾
+  const ROOT_FOLDER_NAME   = '優良護理師表揚';
+  const BG_FOLDER_NAME     = '模板背景圖片';   // 背景圖專用子資料夾
 
   let _tokenClient  = null;
   let _accessToken  = null;
@@ -64,12 +65,11 @@ const GDrive = (() => {
     });
   }
 
-  // ── Ensure root folder exists ─────────────────
+  // ── Ensure folder exists ──────────────────────
   async function _ensureFolder(folderName, parentId = null) {
     const key = (parentId || 'root') + '/' + folderName;
     if (_folderCache[key]) return _folderCache[key];
 
-    // Search for existing folder
     let q = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
     if (parentId) q += ` and '${parentId}' in parents`;
     else q += ` and 'root' in parents`;
@@ -105,8 +105,77 @@ const GDrive = (() => {
     return created.id;
   }
 
-  // ── Upload blob to Drive ───────────────────────
-  // unitName: 用於建立子資料夾（e.g. "內科加護病房"）
+  // ── Set file permission to public (anyone with link can view) ──
+  async function _makePublic(fileId) {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${_accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ role: 'reader', type: 'anyone' })
+    });
+  }
+
+  // ── Build CORS-safe public thumbnail URL ──────
+  // Drive thumbnail URL works cross-origin and supports canvas export
+  // sz=w1280 gives up to 1280px wide — sufficient for 1280×720 backgrounds
+  function getPublicUrl(fileId) {
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1280`;
+  }
+
+  // ── Upload background image (admin only) ──────
+  // Returns { success, publicUrl, fileId } on success
+  async function uploadBgImage(blob, filename, onProgress) {
+    try {
+      await init();
+      await authorize();
+
+      if (onProgress) onProgress('正在確認雲端資料夾…');
+
+      const rootId = await _ensureFolder(ROOT_FOLDER_NAME);
+      const bgId   = await _ensureFolder(BG_FOLDER_NAME, rootId);
+
+      if (onProgress) onProgress('正在上傳背景圖片…');
+
+      // Multipart upload
+      const metadata = { name: filename, parents: [bgId] };
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', blob, filename);
+
+      const res = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${_accessToken}` },
+          body: form
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || '上傳失敗');
+      }
+
+      const file = await res.json();
+
+      if (onProgress) onProgress('正在設定公開權限…');
+
+      // Make public so users can load it without OAuth
+      await _makePublic(file.id);
+
+      const publicUrl = getPublicUrl(file.id);
+
+      return { success: true, fileId: file.id, publicUrl };
+
+    } catch (err) {
+      console.error('[GDrive] uploadBgImage error:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ── Upload general blob (used for completed award images) ──
   async function upload(blob, filename, unitName, onProgress) {
     try {
       await init();
@@ -114,10 +183,8 @@ const GDrive = (() => {
 
       if (onProgress) onProgress('正在確認雲端資料夾…');
 
-      // Root folder: 優良護理師表揚/
       const rootId = await _ensureFolder(ROOT_FOLDER_NAME);
 
-      // Sub-folder by unit name
       let targetId = rootId;
       if (unitName && unitName.trim()) {
         targetId = await _ensureFolder(unitName.trim(), rootId);
@@ -125,11 +192,7 @@ const GDrive = (() => {
 
       if (onProgress) onProgress('正在上傳檔案…');
 
-      // Multipart upload
-      const metadata = {
-        name: filename,
-        parents: [targetId]
-      };
+      const metadata = { name: filename, parents: [targetId] };
       const form = new FormData();
       form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
       form.append('file', blob, filename);
@@ -168,5 +231,5 @@ const GDrive = (() => {
 
   function isAuthorized() { return !!_accessToken; }
 
-  return { init, authorize, upload, signOut, isAuthorized };
+  return { init, authorize, upload, uploadBgImage, getPublicUrl, signOut, isAuthorized };
 })();

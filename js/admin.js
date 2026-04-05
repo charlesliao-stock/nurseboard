@@ -1,16 +1,14 @@
 /**
  * admin.js
  * 後台管理邏輯：登入驗證、模板編輯器（拖曳式）
+ * v1.1 — 背景圖片永久儲存至 Google Drive，以公開 URL 嵌入模板
  */
 
 (() => {
-  // ── Config ─────────────────────────────────────
-  const VERSION = '1.0.1'; // Force cache update
+  const VERSION = '1.1.0';
+
   // ⚠️  正式部署前請更換為環境變數或後端驗證
-  const ADMIN_CREDENTIALS = {
-    username: 'admin',
-    password: 'admin'
-  };
+  const ADMIN_CREDENTIALS = { username: 'admin', password: 'admin' };
   const SESSION_KEY = 'nurse_admin_session';
 
   // ── State ──────────────────────────────────────
@@ -21,19 +19,15 @@
     isDragging: false,
     isResizing: false,
     dragOffset: { x: 0, y: 0 },
-    // Editor canvas scale (DOM px per canvas px)
     scale: 1
   };
 
-  // ── Editor canvas instance (獨立於使用者端 CanvasEngine) ──
   let _editorInst = null;
 
-  // ── DOM refs ───────────────────────────────────
   const $ = id => document.getElementById(id);
 
   // ── Init ───────────────────────────────────────
   function init() {
-    // Check session
     if (sessionStorage.getItem(SESSION_KEY) === 'true') {
       _showAdmin();
     }
@@ -52,7 +46,6 @@
     $('photoDeleteEl').addEventListener('click', _deleteSelectedEl);
     $('btnAddField').addEventListener('click', _openAddFieldModal);
 
-    // Properties panel live update
     ['propX','propY','propW','propH','propFontSize','propFontWeight',
      'propColor','propBindField','propCustomText','propAlign',
      'photoX','photoY','photoW','photoH','photoShape'].forEach(id => {
@@ -69,8 +62,11 @@
     });
 
     $('bgColor').addEventListener('input', _updateBgColor);
+
+    // ── Background image upload (Drive-backed) ──
     $('bgImageInput').addEventListener('change', e => {
-      if (e.target.files[0]) _loadBgImage(e.target.files[0]);
+      const file = e.target.files[0];
+      if (file) _uploadBgImageToDrive(file);
     });
 
     window.addEventListener('resize', _fitEditorCanvas);
@@ -116,7 +112,6 @@
       if (!enabled) li.classList.add('disabled');
       li.innerHTML = `<span class="tl-dot"></span><span class="tl-name">${tpl.name}</span>`;
 
-      // Toggle button
       const tog = document.createElement('button');
       tog.className = 'tl-toggle' + (enabled ? ' on' : '');
       tog.title = enabled ? '停用' : '啟用';
@@ -135,17 +130,18 @@
     });
   }
 
-  function _loadTemplate(id) {
+  async function _loadTemplate(id) {
     adminState.activeTemplateId = id;
     const tpl = adminState.templates.find(t => t.id === id);
     if (!tpl) return;
 
-    // Update toolbar
     $('templateName').value  = tpl.name  || '';
     $('templateStyle').value = tpl.style || 'formal';
     $('bgColor').value = tpl.background || '#EBF4F8';
 
-    // Update list active state
+    // Show current bg image filename if set
+    _updateBgImageStatus(tpl);
+
     document.querySelectorAll('#adminTemplateList li').forEach(li => {
       li.classList.toggle('active', li.dataset.id === id);
     });
@@ -154,21 +150,129 @@
     adminState.selectedElId = null;
     _hideAllProps();
 
-    _renderEditorCanvas(tpl);
+    // Create canvas instance first (sync)
+    _editorInst = createCanvasInstance($('editorCanvas'));
+
+    // If template has a Drive background URL, load it before rendering
+    if (tpl.bgImageUrl) {
+      _setBgStatusLoading('載入背景圖片…');
+      await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
+      _setBgStatusLoading('');
+    }
+
+    _editorInst.render(tpl, _placeholderData());
     _renderOverlays(tpl);
     setTimeout(_fitEditorCanvas, 50);
   }
 
-  // ── Editor Canvas ─────────────────────────────
-  function _renderEditorCanvas(tpl) {
-    const canvas = $('editorCanvas');
-    // width set by createCanvasInstance
-    // height set by createCanvasInstance
-    _editorInst = createCanvasInstance(canvas);
-    _editorInst.render(tpl, _placeholderData());
-    _fitEditorCanvas();
+  // ── Show bg image status below file input ─────
+  function _updateBgImageStatus(tpl) {
+    let statusEl = $('bgImageStatus');
+    if (!statusEl) {
+      statusEl = document.createElement('p');
+      statusEl.id = 'bgImageStatus';
+      statusEl.style.cssText = 'font-size:11px;color:var(--teal-500);margin-top:5px;min-height:16px;';
+      $('bgImageInput').insertAdjacentElement('afterend', statusEl);
+    }
+    if (tpl && tpl.bgImageUrl) {
+      const name = tpl.bgImageName || '已套用背景圖片';
+      statusEl.textContent = '✓ ' + name;
+      statusEl.style.color = 'var(--success)';
+
+      // Show remove button
+      let removeBtn = $('bgImageRemove');
+      if (!removeBtn) {
+        removeBtn = document.createElement('button');
+        removeBtn.id = 'bgImageRemove';
+        removeBtn.className = 'btn btn--danger btn--sm';
+        removeBtn.style.cssText = 'margin-top:6px;width:100%';
+        removeBtn.textContent = '✕ 移除背景圖片';
+        removeBtn.addEventListener('click', _removeBgImage);
+        statusEl.insertAdjacentElement('afterend', removeBtn);
+      }
+      removeBtn.hidden = false;
+    } else {
+      statusEl.textContent = '';
+      const removeBtn = $('bgImageRemove');
+      if (removeBtn) removeBtn.hidden = true;
+    }
   }
 
+  function _setBgStatusLoading(msg) {
+    let statusEl = $('bgImageStatus');
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.style.color = 'var(--ink-soft)';
+  }
+
+  // ── Upload background image to Drive ──────────
+  async function _uploadBgImageToDrive(file) {
+    const tpl = _getActiveTpl();
+    if (!tpl) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      _showToast('請選擇圖片檔案');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      _showToast('圖片檔案請勿超過 5MB');
+      return;
+    }
+
+    _setBgStatusLoading('正在上傳背景圖片…');
+    _showToast('正在上傳背景圖片…');
+
+    const filename = `bg_${tpl.id}_${Date.now()}.${file.name.split('.').pop()}`;
+
+    const result = await GDrive.uploadBgImage(file, filename, (msg) => {
+      _setBgStatusLoading(msg);
+    });
+
+    if (!result.success) {
+      _setBgStatusLoading('');
+      _showToast('上傳失敗：' + result.error);
+      return;
+    }
+
+    // Store Drive public URL and filename in template
+    tpl.bgImageUrl  = result.publicUrl;
+    tpl.bgImageName = file.name;
+
+    // Load image into editor canvas
+    await _editorInst.loadBgFromUrl(tpl.bgImageUrl);
+
+    // Re-render and update UI
+    _editorInst.render(tpl, _placeholderData());
+    _renderOverlays(tpl);
+    _updateBgImageStatus(tpl);
+
+    // Auto-save template so URL is persisted immediately
+    TemplateManager.save(adminState.templates);
+    _renderTemplateList();
+
+    _showToast('✓ 背景圖片已上傳並套用');
+
+    // Clear the file input so same file can be re-selected if needed
+    $('bgImageInput').value = '';
+  }
+
+  // ── Remove background image ───────────────────
+  function _removeBgImage() {
+    const tpl = _getActiveTpl();
+    if (!tpl) return;
+    delete tpl.bgImageUrl;
+    delete tpl.bgImageName;
+    if (_editorInst) _editorInst.setBgImage(null);
+    _reRenderCanvas();
+    _updateBgImageStatus(tpl);
+    TemplateManager.save(adminState.templates);
+    _showToast('已移除背景圖片');
+  }
+
+  // ── Editor Canvas ─────────────────────────────
   function _fitEditorCanvas() {
     const wrap   = $('editorCanvasWrap');
     const canvas = $('editorCanvas');
@@ -183,7 +287,9 @@
   }
 
   function _placeholderData() {
-    return { unit: '單位名稱', name: '姓　名', title: '護理師', deed: '優良事蹟描述文字', date: '' };
+    const data = {};
+    FieldManager.load().forEach(f => { data[f.id] = f.label; });
+    return data;
   }
 
   // ── Drag Overlays ─────────────────────────────
@@ -198,7 +304,6 @@
     const offsetY = canvasR.top  - wrapR.top;
     const scale   = adminState.scale;
 
-    // Container must overlay the canvas
     container.style.position = 'absolute';
     container.style.left    = offsetX + 'px';
     container.style.top     = offsetY + 'px';
@@ -206,13 +311,11 @@
     container.style.height  = canvas.offsetHeight + 'px';
     container.style.pointerEvents = 'all';
 
-    // Text elements
     (tpl.elements || []).forEach(el => {
       const div = _createOverlayEl(el, scale);
       container.appendChild(div);
     });
 
-    // Photo frame
     if (tpl.photoFrame) {
       const div = _createOverlayEl(tpl.photoFrame, scale);
       div.dataset.eltype = 'photo';
@@ -233,7 +336,6 @@
 
     _positionDiv(div, el, scale);
 
-    // Label
     const label = document.createElement('span');
     label.style.cssText = 'pointer-events:none;font-size:10px;color:#1a5c6b;padding:2px;opacity:.7';
     if (el.type === 'text' || !el.type) {
@@ -243,12 +345,10 @@
     }
     div.appendChild(label);
 
-    // Resize handle
     const handle = document.createElement('div');
     handle.className = 'el-handle';
     div.appendChild(handle);
 
-    // Events
     div.addEventListener('mousedown', e => _onElMousedown(e, div, el));
     handle.addEventListener('mousedown', e => {
       e.stopPropagation();
@@ -375,7 +475,6 @@
       $('propsText').hidden   = false;
       $('propsPhoto').hidden  = true;
 
-      // Dynamically populate bindField options from FieldManager
       const sel = $('propBindField');
       sel.innerHTML = '';
       FieldManager.load().forEach(f => {
@@ -404,7 +503,6 @@
   }
 
   function _hexColor(c) {
-    // Ensure color is valid hex for <input type=color>
     if (c && c.startsWith('#') && (c.length === 4 || c.length === 7)) return c;
     return '#1a2126';
   }
@@ -450,15 +548,6 @@
     if (!tpl) return;
     tpl.background = $('bgColor').value;
     _reRenderCanvas();
-  }
-
-  function _loadBgImage(file) {
-    const img = new Image();
-    img.onload = () => {
-      _editorInst && _editorInst.setBgImage(img);
-      _reRenderCanvas();
-    };
-    img.src = URL.createObjectURL(file);
   }
 
   // ── Add/Delete Elements ───────────────────────
@@ -564,15 +653,8 @@
   function _reRenderCanvas() {
     const tpl = _getActiveTpl();
     if (!tpl) return;
-    // 重用現有實例；若尚未建立則先建立
     if (!_editorInst) _editorInst = createCanvasInstance($('editorCanvas'));
     _editorInst.render(tpl, _placeholderData());
-  }
-
-  function _placeholderData() {
-    const data = {};
-    FieldManager.load().forEach(f => { data[f.id] = f.label; });
-    return data;
   }
 
   // ── Field Manager ─────────────────────────────
@@ -589,19 +671,16 @@
       const li = document.createElement('li');
       if (!enabled) li.classList.add('disabled');
 
-      // Label
       const labelEl = document.createElement('span');
       labelEl.className = 'fl-label';
       labelEl.textContent = f.label;
       li.appendChild(labelEl);
 
-      // Type badge
       const typeEl = document.createElement('span');
       typeEl.className = 'fl-type';
       typeEl.textContent = f.type === 'textarea' ? '長文字' : f.type === 'date' ? '日期' : '文字';
       li.appendChild(typeEl);
 
-      // Built-in badge
       if (isBuiltIn) {
         const badge = document.createElement('span');
         badge.className = 'fl-builtin';
@@ -609,7 +688,6 @@
         li.appendChild(badge);
       }
 
-      // Enable/disable toggle
       const tog = document.createElement('button');
       tog.className = 'tl-toggle' + (enabled ? ' on' : '');
       tog.title = enabled ? '停用' : '啟用';
@@ -622,7 +700,6 @@
       });
       li.appendChild(tog);
 
-      // Delete button (non built-in only)
       if (!isBuiltIn) {
         const delBtn = document.createElement('button');
         delBtn.className = 'fl-del';
@@ -634,7 +711,7 @@
           FieldManager.removeField(f.id);
           _renderFieldList();
           const tpl = _getActiveTpl();
-          if (tpl) { _renderEditorCanvas(tpl); _renderOverlays(tpl); }
+          if (tpl) { _reRenderCanvas(); _renderOverlays(tpl); }
           _showToast(`已刪除欄位「${f.label}」`);
         });
         li.appendChild(delBtn);
@@ -652,13 +729,11 @@
       }
     });
     TemplateManager.save(templates);
-    // Sync in-memory state
     adminState.templates = templates;
     _renderTemplateList();
   }
 
   function _openAddFieldModal() {
-    // Build modal
     let modal = $('addFieldModal');
     if (!modal) {
       modal = document.createElement('div');
