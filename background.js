@@ -1,0 +1,164 @@
+// background.js - Service Worker
+// 1. 首次安裝時初始化 HR 預設班別到 storage（唯一定義來源）
+// 2. 持久監聽 content.js 的 modalClosed 訊息並執行分頁跳轉
+// 3. 定期檢查 GitHub 更新
+
+const VERSION_CHECK_URL = "https://raw.githubusercontent.com/charlesliao-stock/hrinput/main/version.json";
+
+// HR 系統內建班別預設清單（含上下班時間）
+const DEFAULT_HR_SHIFTS = [
+  { code: "84",  start: "08:00", end: "16:30" },
+  { code: "85",  start: "08:00", end: "17:30" },
+  { code: "4N",  start: "16:00", end: "00:30" },
+  { code: "5G",  start: "17:30", end: "21:30" },
+  { code: "PH",  start: "00:00", end: "08:30" },
+  { code: "SS",  start: "08:00", end: "17:30" },
+  { code: "VV",  start: "08:00", end: "17:30" },
+  { code: "DL",  start: "13:30", end: "22:00" },
+  { code: "FF",  start: null,    end: null    },
+  { code: "WW",  start: null,    end: null    },
+  { code: "W+",  start: null,    end: null    },
+  { code: "NH",  start: null,    end: null    },
+  { code: "N+",  start: null,    end: null    },
+];
+
+// 語意化版本比較：回傳 remote 是否嚴格新於 local
+// 支援 "1.6"、"1.10"、"1.6.2" 等不同段數的版本號，逐段以數字比較（非字串比較），
+// 避免 "1.10" 被字串比較誤判成小於 "1.9"。
+function isNewerVersion(remote, local) {
+    const r = String(remote || "").trim().split(".").map(n => parseInt(n, 10) || 0);
+    const l = String(local  || "").trim().split(".").map(n => parseInt(n, 10) || 0);
+    const len = Math.max(r.length, l.length);
+    for (let i = 0; i < len; i++) {
+        const rv = r[i] || 0;
+        const lv = l[i] || 0;
+        if (rv > lv) return true;
+        if (rv < lv) return false;
+    }
+    return false; // 完全相同 → 不算更新
+}
+
+// 檢查更新函式
+async function checkForUpdates() {
+  try {
+    const response = await fetch(VERSION_CHECK_URL + "?t=" + Date.now()); // 加入 timestamp 避免快取
+    const text = await response.text();
+    // 移除可能存在的 BOM 或隱藏字元，並解析 JSON
+    const data = JSON.parse(text.trim());
+    const currentVersion = chrome.runtime.getManifest().version;
+
+    if (isNewerVersion(data.version, currentVersion)) {
+      console.log(`[更新偵測] 發現新版本: ${data.version} (目前: ${currentVersion})`);
+      chrome.storage.local.set({ 
+        updateAvailable: true, 
+        latestVersion: data.version,
+        downloadUrl: data.downloadUrl,
+        changelog: data.changelog
+      });
+      // 在圖示上顯示 "New" 標籤
+      chrome.action.setBadgeText({ text: "New" });
+      chrome.action.setBadgeBackgroundColor({ color: "#e74c3c" });
+    } else {
+      chrome.storage.local.set({ updateAvailable: false });
+      chrome.action.setBadgeText({ text: "" });
+    }
+  } catch (error) {
+    console.error("[更新偵測] 檢查失敗:", error);
+  }
+}
+
+// 瀏覽器完全關閉後重新啟動時觸發（與 onInstalled 不同，onInstalled 是安裝/更新/
+// 重新載入擴充功能時觸發；onStartup 才是「整個瀏覽器行程重啟」時觸發）。
+// 此時網頁班表可能早已被異動，之前記憶的資料已不可信，一律清除，
+// 讓 popup 視為「尚未完成步驟1」，強制使用者重新讀取。
+chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.remove(['lastMonthData', 'pendingNextUrl']);
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  // 初始化 autoMode
+  chrome.storage.local.get('autoMode', (d) => {
+    if (d.autoMode === undefined) {
+      chrome.storage.local.set({ autoMode: true });
+    }
+  });
+
+  // 初始化 HR 班別
+  chrome.storage.local.get('hrShifts', (data) => {
+    if (!data.hrShifts || data.hrShifts.length === 0) {
+      chrome.storage.local.set({ hrShifts: DEFAULT_HR_SHIFTS });
+    } else {
+      // 已有舊資料：若為舊格式（純字串陣列），自動遷移為物件格式
+      const needsMigration = data.hrShifts.length > 0 && typeof data.hrShifts[0] === 'string';
+      if (needsMigration) {
+        const migrated = DEFAULT_HR_SHIFTS.filter(d =>
+          data.hrShifts.includes(d.code)
+        );
+        // 補上舊資料中有但 DEFAULT 沒有的代號（時間設為 null）
+        data.hrShifts.forEach(code => {
+          if (!migrated.find(d => d.code === code)) {
+            migrated.push({ code, start: null, end: null });
+          }
+        });
+        chrome.storage.local.set({ hrShifts: migrated });
+      }
+    }
+  });
+
+  // 設定定時檢查更新 (每 6 小時檢查一次)
+  chrome.alarms.create("checkUpdate", { periodInMinutes: 360 });
+  checkForUpdates();
+});
+
+// 監聽定時任務
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "checkUpdate") {
+    checkForUpdates();
+  }
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "modalClosed") {
+    chrome.storage.local.get(['pendingNextUrl', 'autoMode'], (data) => {
+      if (data.autoMode && data.pendingNextUrl) {
+        const url = data.pendingNextUrl;
+        chrome.storage.local.remove('pendingNextUrl');
+        if (sender && sender.tab && sender.tab.id) {
+          chrome.tabs.update(sender.tab.id, { url });
+        } else {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (tabs && tabs[0]) chrome.tabs.update(tabs[0].id, { url });
+          });
+        }
+      } else {
+        chrome.storage.local.remove('pendingNextUrl');
+      }
+    });
+    sendResponse({ received: true });
+    return true;
+  }
+
+  if (request.action === "setPendingUrl") {
+    chrome.storage.local.set({ pendingNextUrl: request.url }, () => {
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  if (request.action === "clearPendingUrl") {
+    chrome.storage.local.remove('pendingNextUrl');
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (request.action === "manualCheckUpdate") {
+    checkForUpdates().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (request.action === "openQuickSettings") {
+    chrome.windows.create({ url: 'quick_settings.html', type: 'popup', width: 360, height: 400 });
+    sendResponse({ ok: true });
+    return true;
+  }
+});
